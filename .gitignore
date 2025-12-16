@@ -1,22 +1,21 @@
+# Data
+Data hit & bounce/
+*.mp4
+*.npz
+*.pt
+models/
+
+# Notebooks
+*.ipynb
+
+# Images de calibration
+*.jpg
+*.png
+
+# Documents
+*.docx
+
 # Python
 __pycache__/
-*.py[cod]
-*.egg-info/
+*.pyc
 .venv/
-venv/
-.env
-.ipynb_checkpoints/
-pytest_cache/
-
-# Data (keep raw video/points out of git)
-data/
-*.mp4
-*.avi
-
-# Outputs
-outputs/
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
