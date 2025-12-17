@@ -1,191 +1,201 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple
+
 import numpy as np
-import cv2
-from scipy.signal import savgol_filter
 import matplotlib.pyplot as plt
 import json
 import os
+
+import data_loader as io_utils
+
 
 # ======================================================
 # CONFIGURATION
 # ======================================================
 @dataclass
 class FeatureConfig:
-    fps: float = 25.0
+    fps: float = 50.0
     smooth_window: int = 7
+    local_window: int = 5   # fenêtre pour features locales
+
 
 # ======================================================
-# 1. CAMÉRA & CALIBRATION (inchangé)
+# OUTILS LOCAUX
 # ======================================================
-class CameraModel:
-    def __init__(self):
-        if os.path.exists("Camera_Params_Distorted.npz"):
-            data = np.load("Camera_Params_Distorted.npz")
-            self.mtx = data["camera_matrix"]
-            self.dist = data["dist_coeffs"]
-            self.rvec = data["rvec"]
-            self.tvec = data["tvec"]
-        else:
-            print("⚠️ Calibration caméra absente → mode dummy")
-            self.mtx = np.eye(3)
-            self.dist = np.zeros((5, 1))
-            self.rvec = np.zeros((3, 1))
-            self.tvec = np.zeros((3, 1))
+def local_energy(arr: np.ndarray, w: int) -> np.ndarray:
+    """
+    Énergie locale robuste (moyenne quadratique sur fenêtre glissante).
+    """
+    out = np.full_like(arr, np.nan)
+    for i in range(len(arr)):
+        i0 = max(0, i - w)
+        i1 = min(len(arr), i + w + 1)
+        out[i] = np.nanmean(arr[i0:i1] ** 2)
+    return out
 
-        rotM, _ = cv2.Rodrigues(self.rvec)
-        self.cam_pos = -rotM.T @ self.tvec
-        self.inv_rot = rotM.T
-        self.inv_mtx = np.linalg.inv(self.mtx)
-
-    def pixel_to_ground(self, u, v):
-        if np.isnan(u) or np.isnan(v):
-            return None
-        pts = np.array([[[u, v]]], dtype=np.float32)
-        und = cv2.undistortPoints(pts, self.mtx, self.dist, P=self.mtx)[0][0]
-        ray = self.inv_rot @ (self.inv_mtx @ np.array([*und, 1.0]))
-        if abs(ray[2]) < 1e-6:
-            return None
-        l = -self.cam_pos[2] / ray[2]
-        if l < 0:
-            return None
-        return (self.cam_pos + l * ray.reshape(3, 1)).flatten()
 
 # ======================================================
-# 2. NETTOYAGE NEUTRE (LABEL-FREE)
+# CINÉMATIQUE PURE (SANS LABELS)
 # ======================================================
-def clean_velocity_outliers(x, y, max_jump_px=90.0):
-    for _ in range(3):
-        valid = np.where(~np.isnan(x))[0]
-        if len(valid) < 2:
-            break
-        d = np.hypot(np.diff(x[valid]), np.diff(y[valid]))
-        bad = np.where(d > max_jump_px)[0]
-        if len(bad) == 0:
-            break
-        x[valid[bad + 1]] = np.nan
-        y[valid[bad + 1]] = np.nan
-    return x, y
+def compute_kinematics(
+    frames: List[int],
+    xs: np.ndarray,
+    ys: np.ndarray,
+    cfg: FeatureConfig
+) -> Dict[str, np.ndarray]:
+    """
+    Cinématique image robuste pour unsupervised.
+    Aucune logique hit/bounce ici.
+    """
 
-def clean_local_spikes(x, y, thr=25.0):
-    valid = np.where(~np.isnan(x))[0]
-    for i in range(1, len(valid) - 1):
-        p, c, n = valid[i - 1], valid[i], valid[i + 1]
-        pred = 0.5 * (x[p] + x[n]), 0.5 * (y[p] + y[n])
-        if np.hypot(x[c] - pred[0], y[c] - pred[1]) > thr:
-            x[c] = np.nan
-            y[c] = np.nan
-    return x, y
-
-def remove_short_segments(x, y, min_len=6):
-    mask = ~np.isnan(x)
-    diff = np.diff(np.r_[0, mask.astype(int), 0])
-    starts = np.where(diff == 1)[0]
-    ends = np.where(diff == -1)[0]
-    for s, e in zip(starts, ends):
-        if e - s < min_len:
-            x[s:e] = np.nan
-            y[s:e] = np.nan
-    return x, y
-
-def interpolate_small_gaps(a, max_gap=5):
-    idx = np.arange(len(a))
-    valid = ~np.isnan(a)
-    if valid.sum() < 2:
-        return a
-    interp = np.interp(idx, idx[valid], a[valid])
-    gaps = np.where(np.diff(np.where(valid)[0]) > max_gap)[0]
-    for g in gaps:
-        i0 = np.where(valid)[0][g] + 1
-        i1 = np.where(valid)[0][g + 1]
-        interp[i0:i1] = np.nan
-    return interp
-
-def smooth_segments(x, y, window=7):
-    mask = ~np.isnan(x)
-    diff = np.diff(np.r_[0, mask.astype(int), 0])
-    for s, e in zip(np.where(diff == 1)[0], np.where(diff == -1)[0]):
-        if e - s >= window:
-            w = window if window % 2 else window - 1
-            x[s:e] = savgol_filter(x[s:e], w, 2)
-            y[s:e] = savgol_filter(y[s:e], w, 2)
-    return x, y
-
-def process_trajectory(xs, ys):
-    x = np.asarray(xs, float)
-    y = np.asarray(ys, float)
-    x, y = clean_velocity_outliers(x, y)
-    x, y = clean_local_spikes(x, y)
-    x, y = remove_short_segments(x, y)
-    x = interpolate_small_gaps(x)
-    y = interpolate_small_gaps(y)
-    x, y = smooth_segments(x, y)
-    return x, y
-
-# ======================================================
-# 3. CINÉMATIQUE PURE (SANS LABELS)
-# ======================================================
-def compute_kinematics(frames, xs, ys, cfg: FeatureConfig):
+    # Dérivées (NaN-safe)
     vx = np.gradient(xs)
     vy = np.gradient(ys)
     ax = np.gradient(vx)
     ay = np.gradient(vy)
 
     speed = np.hypot(vx, vy)
+    acc_mag = np.hypot(ax, ay)
+
+    # Direction et changements de direction
     angles = np.unwrap(np.arctan2(vy, vx))
     turn_rate = np.abs(np.gradient(angles))
 
+    # Sol image (approx robuste)
     ground_y = np.nanpercentile(ys, 99)
 
+    # Distances et ruptures
+    dist_to_ground = ys - ground_y
+    speed_diff = np.abs(np.gradient(speed))
+    vertical_shock = np.abs(np.gradient(vy))
+
+    # Énergie locale (contexte)
+    speed_energy = local_energy(speed, cfg.local_window)
+    vy_energy = local_energy(vy, cfg.local_window)
+
     return dict(
-        xs=xs, ys=ys,
-        vx=vx, vy=vy,
-        ax=ax, ay=ay,
+        xs=xs,
+        ys=ys,
+        vx=vx,
+        vy=vy,
+        ax=ax,
+        ay=ay,
         speed=speed,
+        acc_mag=acc_mag,
         turn_rate=turn_rate,
-        ground_y=ground_y
+        dist_to_ground=dist_to_ground,
+        speed_diff=speed_diff,
+        vertical_shock=vertical_shock,
+        speed_energy=speed_energy,
+        vy_energy=vy_energy,
+        ground_y=np.array([ground_y], dtype=float),
     )
 
+
 # ======================================================
-# 4. ANALYSE PRINCIPALE (SANS HIT/BOUNCE)
+# MATRICE DE FEATURES
 # ======================================================
-def analyze_rally(json_path):
-    with open(json_path, "r") as f:
+def build_feature_matrix(
+    frames: List[int],
+    xs: List[float],
+    ys: List[float],
+    cfg: FeatureConfig
+) -> Tuple[np.ndarray, List[str], Dict[str, np.ndarray]]:
+    """
+    Retourne :
+      - X     : matrice (n_frames, n_features)
+      - names : noms des features
+      - kin   : dictionnaire complet pour debug / plots
+    """
+
+    x = np.asarray(xs, dtype=float)
+    y = np.asarray(ys, dtype=float)
+
+    kin = compute_kinematics(frames, x, y, cfg)
+
+    # 🔥 Features sélectionnées pour unsupervised
+    X = np.column_stack([
+        kin["speed"],
+        kin["vy"],
+        kin["ay"],
+        kin["turn_rate"],
+        kin["acc_mag"],
+        kin["dist_to_ground"],
+        kin["speed_diff"],
+        kin["vertical_shock"],
+        kin["speed_energy"],
+        kin["vy_energy"],
+    ])
+
+    names = [
+        "speed",
+        "vy",
+        "ay",
+        "turn_rate",
+        "acc_mag",
+        "dist_to_ground",
+        "speed_diff",
+        "vertical_shock",
+        "speed_energy",
+        "vy_energy",
+    ]
+
+    return X, names, kin
+
+
+# ======================================================
+# HELPERS I/O (DEBUG / ANALYSE)
+# ======================================================
+def analyze_rally(json_path: str, cfg: FeatureConfig | None = None):
+    if cfg is None:
+        cfg = FeatureConfig()
+
+    with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    frames = sorted(int(k) for k in data.keys())
-    xs = [float(data[str(f)].get("x")) if data[str(f)].get("x") is not None else np.nan for f in frames]
-    ys = [float(data[str(f)].get("y")) if data[str(f)].get("y") is not None else np.nan for f in frames]
+    frames, xs, ys, vis, actions = io_utils.extract_series(data)
+    X, names, kin = build_feature_matrix(frames, xs, ys, cfg)
 
-    xs, ys = process_trajectory(xs, ys)
-    kin = compute_kinematics(frames, xs, ys, FeatureConfig())
+    return frames, xs, ys, vis, actions, X, names, kin
 
-    return frames, xs, ys, kin
 
 # ======================================================
-# 5. VISUALISATION SIMPLE
+# VISUALISATIONS SIMPLES
 # ======================================================
-def visualize(frames, xs, ys, kin):
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-
-    ax1.plot(frames, ys, lw=1.5)
-    ax1.invert_yaxis()
-    ax1.set_title("Trajectoire verticale (Y)")
-    ax1.grid(True)
-
-    ax2.plot(frames, kin["speed"], lw=1.5)
-    ax2.set_title("Vitesse image (px/frame)")
-    ax2.grid(True)
-
+def visualize_basic(frames: List[int], ys: List[float], kin: Dict[str, np.ndarray]):
+    plt.figure(figsize=(14, 4))
+    plt.plot(frames, ys, lw=1.5)
+    plt.gca().invert_yaxis()
+    plt.title("Trajectoire verticale (Y)")
+    plt.grid(True, alpha=0.4)
     plt.tight_layout()
     plt.show()
 
+    plt.figure(figsize=(14, 4))
+    plt.plot(frames, kin["speed"], lw=1.5)
+    plt.title("Vitesse image (px/frame)")
+    plt.grid(True, alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(14, 4))
+    plt.plot(frames, kin["vertical_shock"], lw=1.5)
+    plt.title("Choc vertical (|dVy|)")
+    plt.grid(True, alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+
+
+# ======================================================
+# MAIN (TEST LOCAL)
 # ======================================================
 if __name__ == "__main__":
     path = "Data hit & bounce/per_point_v2/ball_data_230.json"
     if os.path.exists(path):
-        fr, x, y, kin = analyze_rally(path)
-        visualize(fr, x, y, kin)
+        fr, x, y, vis, act, X, names, kin = analyze_rally(path)
+        print("Features :", names)
+        visualize_basic(fr, y, kin)
     else:
         print("Fichier JSON introuvable.")
