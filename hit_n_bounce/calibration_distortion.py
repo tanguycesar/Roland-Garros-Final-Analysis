@@ -4,7 +4,7 @@ import os
 
 # --- CONFIGURATION ---
 # Mets ici ta vidéo
-VIDEO_PATH = r"c:\Users\tangu\Desktop\Test_Quantum_Tennis\Roland-Garros-Final-Analysis\Alcaraz_Sinner_2025-001.mp4"
+VIDEO_PATH = r"C:\Users\tangu\OneDrive\Desktop\Cours\3 - TRIED\STAGE\Roland-Garros-Final-Analysis\Alcaraz_Sinner_2025.mp4"
 FRAME_TO_USE = 400000 
 
 # --- POINTS DU TERRAIN (Mètres) ---
