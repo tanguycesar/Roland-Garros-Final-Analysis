@@ -1,186 +1,135 @@
 from __future__ import annotations
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import json
+
+import data_loader as io_utils
+import features as feat_utils
 
 # ======================================================
-# IMPORTS PROJET
+# LOGIQUE DE DÉTECTION PHYSIQUE (UNITÉS MÉTRIQUES)
 # ======================================================
-import data_loader as io_utils   # extract_series()
-from features import FeatureConfig
-
-
-# ======================================================
-# DÉTECTION PHYSIQUE Y-ONLY
-# ======================================================
-def detect_bounce_and_hit_from_Y(
+def detect_tennis_events(
     frames: List[int],
-    ys: List[float],
-    fps: float = 25.0
+    kin: Dict[str, np.ndarray],
+    fps: float
 ) -> np.ndarray:
     """
-    Détection non supervisée basée UNIQUEMENT sur Y image
-
-    Bounce :
-      - maximum local
-      - vy : + -> -
-      - ay négatif (courbure)
-
-    Hit :
-      - fort pic |ay|
-      - après un rebond
+    Détection basée sur la physique réelle du court (mètres, m/s^3).
     """
-
-    y = np.asarray(ys, dtype=float)
-    n = len(y)
-
-    vy = np.gradient(y)
-    ay = np.gradient(vy)
-
+    n = len(frames)
     actions = np.array(["air"] * n, dtype=object)
 
-    # ==========================
-    # 1. DÉTECTION DES BOUNCES
-    # ==========================
-    for i in range(3, n - 3):
-        if np.isnan(y[i-2:i+3]).any():
-            continue
+    # Récupération des features en mètres (via Camera_Params_Distorted.npz)
+    ym = kin["ym"]          # Position profondeur (m)
+    jerk = kin["jerk"]      # Secousse physique (m/s^3)
+    turn_rate = kin["turn_rate"] # Changement de direction (rad/s)
+    vy = kin["vy"]          # Vitesse de profondeur (m/s)
+    
+    # --- SEUILS PHYSIQUES RÉELS ---
+    # En m/s^3, ces seuils sont universels (haut ou bas du court)
+    hit_jerk_thr = np.nanpercentile(jerk, 97.5) 
+    bounce_jerk_thr = np.nanpercentile(jerk, 88) 
+    
+    # Zones du court (Dimensions Roland-Garros)
+    # ym ~ 11.88 m (Bas) | ym ~ -11.88 m (Haut) | ym ~ 0 (Filet)
+    baseline_limit = 10.0 # On considère qu'un rebond est près des lignes de fond
+    service_line = 6.4
 
-        # MAX local (Y image)
-        is_local_max = (
-            y[i] > y[i-1] and
-            y[i] > y[i+1]
-        )
+    # État pour l'alternance (Machine à États)
+    last_action = "none"
+    last_idx = -100
+    cooldown = int(0.5 * fps) # 0.5 seconde entre deux coups
 
-        # Descente -> montée
-        vy_flip = (vy[i-1] > 0) and (vy[i+1] < 0)
+    for i in range(2, n - 2):
+        if np.isnan(ym[i]): continue
 
-        # Courbure (rebond arrondi)
-        strong_curvature = ay[i] < np.nanpercentile(ay, 20)
-
-        if is_local_max and vy_flip and strong_curvature:
-            actions[i] = "bounce"
-
-    bounce_idx = np.where(actions == "bounce")[0]
-
-    # ==========================
-    # 2. DÉTECTION DES HITS
-    # ==========================
-    ay_thr = np.nanpercentile(np.abs(ay), 92)
-
-    for b in bounce_idx:
-        start = b + 3
-        end = min(b + int(0.25 * fps), n - 2)
-
-        for i in range(start, end):
-            if np.isnan(ay[i]):
+        # 1. DÉTECTION DU HIT (FRARE) - LE PLUS GROS JERK
+        # Si le Jerk est extrême et que c'est un maximum local
+        if jerk[i] >= hit_jerk_thr and jerk[i] == np.nanmax(jerk[i-2:i+3]):
+            
+            # Règle d'alternance : Pas deux hits d'affilée sans temps de vol
+            if last_action != "hit" or (i - last_idx) > cooldown:
+                actions[i] = "hit"
+                last_action = "hit"
+                last_idx = i
                 continue
 
-            if abs(ay[i]) >= ay_thr:
-                actions[i] = "hit"
-                break
+        # 2. DÉTECTION DU BOUNCE (REBOND)
+        # Un rebond sur le terrain en mètres crée aussi une rupture de Jerk
+        # et se produit souvent dans des zones spécifiques (baselines / service)
+        if last_action == "hit" and (i - last_idx) > (0.2 * fps): # Un rebond vient après une frappe
+            
+            # Un rebond se détecte par un Jerk significatif 
+            # ET souvent une inversion ou déviation de la trajectoire au sol
+            if jerk[i] > bounce_jerk_thr and jerk[i] == np.nanmax(jerk[i-1:i+2]):
+                
+                # Check de zone : est-on dans une zone de rebond probable ?
+                is_near_lines = (abs(ym[i]) > 5.0) # Baselines ou lignes de service
+                
+                if is_near_lines:
+                    if (i - last_idx) > (0.3 * fps): # Temps de vol minimal
+                        actions[i] = "bounce"
+                        last_action = "bounce"
+                        last_idx = i
 
     return actions
 
 # ======================================================
-# PIPELINE COMPLET
+# PIPELINE ET VISUALISATION
 # ======================================================
-def unsupervised_hit_bounce_detection(
-    ball_data: Dict[str, Any],
-    cfg: FeatureConfig | None = None
-) -> Dict[str, Any]:
+def run_unsupervised_pipeline(json_path: str, cfg: feat_utils.FeatureConfig):
+    print(f"--- Analyse : {os.path.basename(json_path)} ---")
+    with open(json_path, "r", encoding="utf-8") as f:
+        raw_json_data = json.load(f)
+    
+    # 1. Loader (PCHIP + Calibration Distorsion)
+    frames, xs, ys, vis = io_utils.extract_series(raw_json_data)
+    
+    # 2. Features (Conversion PIXELS -> METRES automatique)
+    kin = feat_utils.compute_kinematics(frames, np.array(xs), np.array(ys), cfg)
 
-    if cfg is None:
-        cfg = FeatureConfig()
+    # 3. Détection sur les données métriques
+    pred_actions = detect_tennis_events(frames, kin, cfg.fps)
 
-    # --- extraction + nettoyage (sans labels)
-    frames, xs, ys, vis, _ = io_utils.extract_series(ball_data)
+    results = {str(fr): {"x": xs[i], "y": ys[i], "x_m": kin["xm"][i], "y_m": kin["ym"][i], "pred_action": pred_actions[i]} 
+               for i, fr in enumerate(frames)}
 
-    # --- détection Y-only
-    actions_pred = detect_bounce_and_hit_from_Y(
-        frames=frames,
-        ys=ys,
-        fps=cfg.fps
-    )
+    return frames, results, kin
 
-    # --- construction de la sortie
-    out = {}
-    for i, fr in enumerate(frames):
-        d = dict(ball_data[str(fr)])
+def visualize_results(frames, kin, results):
+    ym = kin["ym"] # On affiche en mètres pour vérifier la physique
+    actions = [results[str(f)]["pred_action"] for f in frames]
 
-        if not bool(d.get("visible", True)):
-            d["pred_action"] = "air"
-        else:
-            d["pred_action"] = actions_pred[i]
+    plt.figure(figsize=(16, 7))
+    plt.plot(frames, ym, color='black', lw=1, alpha=0.5, label="Trajectoire Terrain (m)")
+    
+    # Repères du court (Lignes de fond et filet)
+    plt.axhline(11.88, color='red', ls='--', alpha=0.3, label="Ligne de fond Bas")
+    plt.axhline(-11.88, color='red', ls='--', alpha=0.3, label="Ligne de fond Haut")
+    plt.axhline(0, color='blue', ls=':', alpha=0.3, label="Filet")
 
-        # debug / visu
-        d["y_clean"] = ys[i]
-        d["x_clean"] = xs[i]
+    hit_f = [f for f, a in zip(frames, actions) if a == "hit"]
+    hit_y = [y for y, a in zip(ym, actions) if a == "hit"]
+    bounce_f = [f for f, a in zip(frames, actions) if a == "bounce"]
+    bounce_y = [y for y, a in zip(ym, actions) if a == "bounce"]
+    
+    plt.scatter(hit_f, hit_y, color='limegreen', marker='*', s=250, label='HIT', zorder=5)
+    plt.scatter(bounce_f, bounce_y, color='orange', marker='o', s=120, label='BOUNCE', zorder=5)
 
-        out[str(fr)] = d
-
-    return out
-
-
-# ======================================================
-# VISUALISATION
-# ======================================================
-def visualize_results(
-    enriched_data: Dict[str, Any],
-    title: str = "Unsupervised Y-only Detection"
-):
-    frames = sorted(int(k) for k in enriched_data.keys())
-
-    ys = np.array([enriched_data[str(f)].get("y_clean", np.nan) for f in frames])
-    actions = [enriched_data[str(f)]["pred_action"] for f in frames]
-
-    hit_f, hit_y = [], []
-    bounce_f, bounce_y = [], []
-
-    for f, y, a in zip(frames, ys, actions):
-        if a == "hit":
-            hit_f.append(f)
-            hit_y.append(y)
-        elif a == "bounce":
-            bounce_f.append(f)
-            bounce_y.append(y)
-
-    plt.figure(figsize=(16, 6))
-    plt.plot(frames, ys, lw=2, label="Y trajectory")
-    plt.scatter(hit_f, hit_y, c="green", marker="*", s=120, label="Hit", zorder=5)
-    plt.scatter(bounce_f, bounce_y, c="red", marker="^", s=120, label="Bounce", zorder=5)
-
-    plt.gca().invert_yaxis()
-    plt.xlabel("Frame")
-    plt.ylabel("Pixel Y (image)")
-    plt.title(title)
-    plt.grid(True, alpha=0.4)
+    plt.title("Détection Non Supervisée : Physique Réelle (Mètres)")
+    plt.ylabel("Profondeur du Court (mètres)")
+    plt.xlabel("Frames")
     plt.legend()
-    plt.tight_layout()
+    plt.grid(True, alpha=0.3)
     plt.show()
 
-
-# ======================================================
-# MAIN
-# ======================================================
 if __name__ == "__main__":
+    my_cfg = feat_utils.FeatureConfig(fps=50.0)
+    input_file = "Data hit & bounce/per_point_v2/ball_data_230.json"
 
-    file_to_test = "Data hit & bounce/per_point_v2/ball_data_236.json"
-
-    if not os.path.exists(file_to_test):
-        print("Fichier introuvable.")
-        exit()
-
-    print(f"Analyse de {file_to_test}")
-
-    raw_data = io_utils.load_ball_json(file_to_test)
-
-    results = unsupervised_hit_bounce_detection(raw_data)
-
-    n_hits = sum(v["pred_action"] == "hit" for v in results.values())
-    n_bounces = sum(v["pred_action"] == "bounce" for v in results.values())
-
-    print(f"Résultats : {n_hits} hits, {n_bounces} bounces")
-
-    visualize_results(results, title=os.path.basename(file_to_test))
+    if os.path.exists(input_file):
+        fr, res, kin = run_unsupervised_pipeline(input_file, my_cfg)
+        visualize_results(fr, kin, res)
