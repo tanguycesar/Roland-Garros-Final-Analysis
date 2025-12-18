@@ -7,6 +7,24 @@ from scipy.signal import savgol_filter
 from scipy.interpolate import PchipInterpolator
 
 # ======================================================
+# 0. UTILITAIRES I/O
+# ======================================================
+
+def load_ball_json(path: str | Path) -> Dict[str, Any]:
+    """Charge un fichier JSON de trajectoire de balle."""
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def iter_point_files(points_dir: str | Path) -> List[Path]:
+    """Retourne la liste des fichiers JSON dans le répertoire."""
+    points_dir = Path(points_dir)
+    if not points_dir.exists():
+        raise FileNotFoundError(f"Dossier introuvable : {points_dir}")
+    return sorted(points_dir.glob("ball_data_*.json"))
+
+
+# ======================================================
 # 1. SEGMENTATION : DÉTECTION DU VRAI DÉPART (RALLYE COMPLET)
 # ======================================================
 
@@ -118,7 +136,9 @@ def extract_series(ball_data: Dict[str, Any]):
     
     xs_clean, ys_clean = process_trajectory(xs_raw, ys_raw)
     act = [str(ball_data[str(f)].get("action", "air")) for f in frames]
-    return frames, xs_clean, ys_clean, act
+    vis = [bool(ball_data[str(f)].get("visible", True)) for f in frames]
+    return frames, xs_clean, ys_clean, vis, act
+
 
 # ======================================================
 # 4. VISUALISATION
@@ -127,18 +147,17 @@ def extract_series(ball_data: Dict[str, Any]):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     # Remplacez par votre point 236 ou celui qui posait problème
-    data_path = Path(r"C:\Users\tangu\OneDrive\Desktop\Cours\3 - TRIED\STAGE\Roland-Garros-Final-Analysis\Data hit & bounce\per_point_v2\ball_data_230.json")
+    data_path = Path(r"C:\Users\tangu\Desktop\Test_Quantum_Tennis\Roland-Garros-Final-Analysis\Data hit & bounce\per_point_v2\ball_data_230.json")
     
     if data_path.exists():
-        with open(data_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        frames, xs, ys, _ = extract_series(data)
+        data = load_ball_json(data_path)
+        frames, xs, ys, vis, acts = extract_series(data)
         
         ys_orig = [data[str(f)].get("y") for f in frames]
         
         plt.figure(figsize=(15, 6))
         plt.scatter(frames, ys_orig, color='red', s=8, alpha=0.3, label='Brut (Données initiales)')
         plt.plot(frames, ys, color='blue', linewidth=1.5, label='Rallye complet (service réussi + échange)')
-        plt.title("Isolation du Rallye : On garde tout après le silence de la 1ère balle")
+        plt.title("Point 230 - Trajectoire Y de la balle après traitement")
         plt.legend()
         plt.show()
