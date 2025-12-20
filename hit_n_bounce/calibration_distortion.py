@@ -3,27 +3,102 @@ import numpy as np
 import os
 
 # --- CONFIGURATION ---
-# Mets ici ta vidéo
-VIDEO_PATH = r"C:\Users\tangu\OneDrive\Desktop\Cours\3 - TRIED\STAGE\Roland-Garros-Final-Analysis\Alcaraz_Sinner_2025.mp4"
-FRAME_TO_USE = 400000 
+# Le script cherche la vidéo dans plusieurs emplacements possibles
+# Tu peux aussi créer un fichier config.txt avec le chemin de ta vidéo
+VIDEO_FILENAME = "Alcaraz_Sinner_2025-001.mp4"  # Nom du fichier vidéo (sans chemin)
+FRAME_TO_USE = 400000
+
+def find_video_path(filename):
+    """Cherche la vidéo dans plusieurs emplacements possibles"""
+    # Chercher dans la racine du projet
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    possible_paths = [
+        os.path.join(project_root, filename),
+        os.path.join(project_root, "videos", filename),
+        os.path.join(os.getcwd(), filename),
+    ]
+    
+    # Chercher un fichier config.txt à la racine du projet
+    config_file = os.path.join(project_root, "config.txt")
+    if os.path.exists(config_file):
+        with open(config_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip() and not line.startswith('#'):
+                    custom_path = line.strip()
+                    if os.path.exists(custom_path):
+                        return custom_path
+    
+    # Chercher dans les emplacements par défaut
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    
+    return None
+
+VIDEO_PATH = find_video_path(VIDEO_FILENAME) 
 
 # --- POINTS DU TERRAIN (Mètres) ---
-# On utilise toujours les couloirs de simple (Singles Lines)
+# Largeur double: 10.97m (±5.485m du centre)
+# Largeur simple: 8.23m (±4.115m du centre)
+# Longueur totale: 23.77m (±11.885m du centre)
 OBJECT_POINTS = np.array([
-    [-4.115,  11.885, 0], [ 4.115,  11.885, 0], # Fond Haut
-    [-4.115,   6.40,  0], [ 0.0,     6.40,  0], [ 4.115,   6.40,  0], # Service Haut
-    [-4.115,   0.0,   0], [ 4.115,   0.0,   0], # Filet
-    [-4.115,  -6.40,  0], [ 0.0,    -6.40,  0], [ 4.115,  -6.40,  0], # Service Bas
-    [-4.115, -11.885, 0], [ 4.115, -11.885, 0]  # Fond Bas
+    # Ligne de fond HAUT (5 points: coin double, coin simple, centre, coin simple, coin double)
+    [-5.485,  11.885, 0],  # 1. Fond Haut GAUCHE (coin double)
+    [-4.115,  11.885, 0],  # 2. Fond Haut GAUCHE (coin simple)
+    [ 0.0,    11.885, 0],  # 3. Fond Haut CENTRE (petit trait)
+    [ 4.115,  11.885, 0],  # 4. Fond Haut DROITE (coin simple)
+    [ 5.485,  11.885, 0],  # 5. Fond Haut DROITE (coin double)
+    
+    # Ligne de service HAUT (3 points: coins simples + T central)
+    [-4.115,   6.40,  0],  # 6. Service Haut GAUCHE (simple)
+    [ 0.0,     6.40,  0],  # 7. Service Haut T (centre)
+    [ 4.115,   6.40,  0],  # 8. Service Haut DROITE (simple)
+    
+    # Ligne de FILET (5 points: coin double, coin simple, centre, coin simple, coin double)
+    [-5.485,   0.0,   0],  # 9. Filet GAUCHE (coin double)
+    [-4.115,   0.0,   0],  # 10. Filet GAUCHE (simple)
+    [ 0.0,     0.0,   0],  # 11. Filet CENTRE (marque au milieu)
+    [ 4.115,   0.0,   0],  # 12. Filet DROITE (simple)
+    [ 5.485,   0.0,   0],  # 13. Filet DROITE (coin double)
+    
+    # Ligne de service BAS (3 points: coins simples + T central)
+    [-4.115,  -6.40,  0],  # 14. Service Bas GAUCHE (simple)
+    [ 0.0,    -6.40,  0],  # 15. Service Bas T (centre)
+    [ 4.115,  -6.40,  0],  # 16. Service Bas DROITE (simple)
+    
+    # Ligne de fond BAS (5 points: coin double, coin simple, centre, coin simple, coin double)
+    [-5.485, -11.885, 0],  # 17. Fond Bas GAUCHE (coin double)
+    [-4.115, -11.885, 0],  # 18. Fond Bas GAUCHE (coin simple)
+    [ 0.0,   -11.885, 0],  # 19. Fond Bas CENTRE (petit trait)
+    [ 4.115, -11.885, 0],  # 20. Fond Bas DROITE (coin simple)
+    [ 5.485, -11.885, 0],  # 21. Fond Bas DROITE (coin double)
 ], dtype=np.float32)
 
 POINT_NAMES = [
-    "1. Fond Haut GAUCHE", "2. Fond Haut DROITE",
-    "3. Service Haut GAUCHE", "4. Service Haut T", "5. Service Haut DROITE",
-    "6. Filet GAUCHE", "7. Filet DROITE",
-    "8. Service Bas GAUCHE", "9. Service Bas T", "10. Service Bas DROITE",
-    "11. Fond Bas GAUCHE", "12. Fond Bas DROITE"
+    "1. Fond Haut GAUCHE (coin double)",
+    "2. Fond Haut GAUCHE (coin simple)",
+    "3. Fond Haut CENTRE (petit trait)",
+    "4. Fond Haut DROITE (coin simple)",
+    "5. Fond Haut DROITE (coin double)",
+    "6. Service Haut GAUCHE (simple)",
+    "7. Service Haut T (centre)",
+    "8. Service Haut DROITE (simple)",
+    "9. Filet GAUCHE (coin double)",
+    "10. Filet GAUCHE (ligne simple)",
+    "11. Filet CENTRE (marque)",
+    "12. Filet DROITE (ligne simple)",
+    "13. Filet DROITE (coin double)",
+    "14. Service Bas GAUCHE (simple)",
+    "15. Service Bas T (centre)",
+    "16. Service Bas DROITE (simple)",
+    "17. Fond Bas GAUCHE (coin double)",
+    "18. Fond Bas GAUCHE (coin simple)",
+    "19. Fond Bas CENTRE (petit trait)",
+    "20. Fond Bas DROITE (coin simple)",
+    "21. Fond Bas DROITE (coin double)"
 ]
+
+NUM_POINTS = 21  # Nombre total de points à cliquer
 
 clicked_points = []
 img_display = None
@@ -31,12 +106,18 @@ img_display = None
 def click_event(event, x, y, flags, param):
     global clicked_points, img_display
     if event == cv2.EVENT_LBUTTONDOWN:
-        if len(clicked_points) < 12:
+        if len(clicked_points) < NUM_POINTS:
             clicked_points.append((x, y))
             idx = len(clicked_points) - 1
             cv2.circle(img_display, (x, y), 5, (0, 0, 255), -1)
             cv2.putText(img_display, str(idx+1), (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
             cv2.imshow("Calibration Avancée", img_display)
+            
+            # Afficher le nom du prochain point à cliquer
+            if len(clicked_points) < NUM_POINTS:
+                print(f"Point {len(clicked_points)}/{NUM_POINTS} cliqué. Prochain: {POINT_NAMES[len(clicked_points)]}")
+            else:
+                print(f"Tous les {NUM_POINTS} points ont été cliqués!")
 
 def run_advanced_calibration():
     global img_display
@@ -49,27 +130,32 @@ def run_advanced_calibration():
     cap.set(cv2.CAP_PROP_POS_FRAMES, FRAME_TO_USE)
     ret, frame = cap.read()
     cap.release()
-    if not ret: return
+    if not ret: 
+        print("Impossible de lire la frame.")
+        return
 
     h, w = frame.shape[:2]
     img_display = frame.copy()
     
-    print("--- CALIBRATION AVEC DISTORSION ---")
-    print("Clique les 12 points avec précision.")
+    print("--- CALIBRATION AVEC DISTORSION (21 POINTS) ---")
+    print(f"Clique les {NUM_POINTS} points avec précision dans l'ordre:")
+    for i, name in enumerate(POINT_NAMES):
+        print(f"  {i+1}. {name}")
+    print("\nCommence par cliquer: " + POINT_NAMES[0])
     
     cv2.namedWindow("Calibration Avancée", cv2.WINDOW_NORMAL)
     cv2.setMouseCallback("Calibration Avancée", click_event)
     cv2.imshow("Calibration Avancée", img_display)
     
-    while len(clicked_points) < 12:
-        if cv2.waitKey(100) == 27: return
+    while len(clicked_points) < NUM_POINTS:
+        if cv2.waitKey(100) == 27: 
+            print("Calibration annulée.")
+            return
 
-    img_points = np.array([clicked_points], dtype=np.float32) # Shape (1, 12, 2)
-    obj_points = np.array([OBJECT_POINTS], dtype=np.float32)  # Shape (1, 12, 3)
+    img_points = np.array([clicked_points], dtype=np.float32)
+    obj_points = np.array([OBJECT_POINTS], dtype=np.float32)
         
-    # Flags pour aider l'algo car on n'a qu'une seule image (c'est difficile pour lui)
-    # CALIB_FIX_PRINCIPAL_POINT : On suppose que le centre optique est au milieu de l'image
-    # CALIB_FIX_ASPECT_RATIO : On suppose que les pixels sont carrés
+    # Flags pour aider l'algo
     flags = cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_FIX_ASPECT_RATIO
     
     # Guess initial
@@ -79,9 +165,9 @@ def run_advanced_calibration():
         obj_points, img_points, (w, h), camera_matrix_init, None, flags=flags
     )
     
-    print(f" Calibration terminée (Erreur RMS: {ret:.2f} pixels)")
-    print("Matrice Distorsion trouvée :")
-    print(dist) # Si ce n'est pas que des zéros, c'est qu'il a trouvé la courbure !
+    print(f"\n✓ Calibration terminée (Erreur RMS: {ret:.2f} pixels)")
+    print("Matrice de distorsion trouvée:")
+    print(dist)
 
     # Sauvegarde
     rvec = rvecs[0]
@@ -92,29 +178,57 @@ def run_advanced_calibration():
              dist_coeffs=dist, 
              rvec=rvec, 
              tvec=tvec)
-    print("💾 Sauvegardé dans Camera_Params_Distorted.npz")
+    print("\n✓ Paramètres sauvegardés dans Camera_Params_Distorted.npz")
 
     # --- VERIFICATION ---
-    # On reprojette les points AVEC la correction de distorsion
     new_img_points, _ = cv2.projectPoints(OBJECT_POINTS, rvec, tvec, mtx, dist)
     new_img_points = new_img_points.reshape(-1, 2)
     
     viz = frame.copy()
     # Dessin des points reprojetés (Vert) vs Cliqués (Rouge)
-    for p_clic, p_proj in zip(clicked_points, new_img_points):
+    for i, (p_clic, p_proj) in enumerate(zip(clicked_points, new_img_points)):
         cv2.circle(viz, (int(p_clic[0]), int(p_clic[1])), 4, (0, 0, 255), -1)
         cv2.circle(viz, (int(p_proj[0]), int(p_proj[1])), 3, (0, 255, 0), -1)
+        cv2.putText(viz, str(i+1), (int(p_proj[0])+5, int(p_proj[1])-5), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-    # Dessin du terrain virtuel
-    connections = [(0,1), (1,11), (11,10), (10,0), (2,4), (7,9), (3,8), (5,6)]
+    # Dessin du terrain virtuel complet
+    connections = [
+        # Rectangle extérieur (doubles)
+        (0, 4), (4, 20), (20, 16), (16, 0),
+        # Rectangle intérieur (simples)
+        (1, 3), (3, 19), (19, 17), (17, 1),
+        # Marques centrales fond de court
+        (2, 2), (18, 18),
+        # Lignes de service horizontales
+        (5, 7), (13, 15),
+        # Ligne centrale (T de service)
+        (6, 14),
+        # Filet complet
+        (8, 9), (9, 10), (10, 11), (11, 12)
+    ]
+    
     for s, e in connections:
         p1 = tuple(new_img_points[s].astype(int))
         p2 = tuple(new_img_points[e].astype(int))
         cv2.line(viz, p1, p2, (0, 255, 255), 2)
 
     cv2.imshow("Resultat (Jaune = Modele avec Distorsion)", viz)
+    print("\nAppuie sur une touche pour fermer...")
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    if VIDEO_PATH is None or not os.path.exists(VIDEO_PATH):
+        print("❌ Vidéo introuvable!")
+        print("\n💡 Solutions:")
+        print(f"   1. Placer '{VIDEO_FILENAME}' à la racine du projet")
+        print("   2. Créer un dossier 'videos/' et y mettre la vidéo")
+        print("   3. Créer un fichier 'config.txt' avec le chemin complet de ta vidéo")
+        print("\nExemple config.txt:")
+        print("   C:\\Users\\ton_nom\\Videos\\Alcaraz_Sinner_2025-001.mp4")
+    else:
+        run_advanced_calibration()
 
 if __name__ == "__main__":
     run_advanced_calibration()

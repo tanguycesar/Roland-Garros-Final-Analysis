@@ -9,7 +9,7 @@ import data_loader as io_utils
 import features as feat_utils
 
 # ======================================================
-# LOGIQUE DE DÉTECTION HYBRIDE AMÉLIORÉE (SÉQUENCE STRICTE)
+# LOGIQUE DE DÉTECTION ASYMÉTRIQUE (TOP vs BOTTOM)
 # ======================================================
 def detect_tennis_events(
     frames: List[int],
@@ -19,103 +19,98 @@ def detect_tennis_events(
     n = len(frames)
     actions = np.array(["air"] * n, dtype=object)
 
-    ym = kin["ym"]         
-    vy = kin["vy"]         
-    jerk = kin["jerk"]     
-    turn = kin["turn_rate"]
-    ay = kin["ay"] 
-
-    # Seuils statistiques
+    ym = kin["ym"]         # Profondeur réelle (m)
+    vy = kin["vy"]         # Vitesse profondeur (m/s)
+    jerk = kin["jerk"]     # Secousse (m/s^3)
+    turn = kin["turn_rate"] # Virage (rad/s)
+    speed = kin["speed"]    # Vitesse (m/s)
+    
+    # Seuils statistiques pour confirmer les chocs
     jerk_thr = np.nanpercentile(jerk, 90)
     turn_thr = np.nanpercentile(turn, 90)
-    ay_thr = np.nanpercentile(np.abs(ay), 85)
 
-    # Variables de contrôle de séquence
-    last_event_type = "none"
-    last_event_idx = -100
-    
-    # ---------------------------------------------------------------------
-    # ÉTAPE 1 : DÉTECTION DES HITS (LES ANCRES DU RALLYE)
-    # ---------------------------------------------------------------------
-    # On détecte d'abord les hits car ils servent de pivots pour la séquence
+    # --- 1. TROUVER LES PIVOTS (Changements de direction Vy) ---
     pivots = []
     for i in range(5, n - 5):
         if np.isnan(vy[i-1]) or np.isnan(vy[i+1]): continue
-        if vy[i-1] * vy[i+1] < 0:
+        if vy[i-1] * vy[i+1] < 0: # Inversion de direction verticale
             pivots.append(i)
 
+    last_action_idx = -100
+    cooldown = int(0.5 * fps)
+
     for idx in pivots:
+        # Calcul des durées de vol (stabilité de la direction)
+        count_pre = 0
+        for j in range(idx - 1, 1, -1):
+            if np.isnan(vy[j]) or (vy[j] * vy[idx-1] < 0): break
+            count_pre += 1
+            
         count_post = 0
-        for j in range(idx + 1, min(idx + 50, n - 1)):
+        for j in range(idx + 1, n - 1):
             if np.isnan(vy[j]) or (vy[j] * vy[idx+1] < 0): break
             count_post += 1
 
-        if count_post > 15:
-            if (jerk[idx] > jerk_thr * 0.8 or turn[idx] > turn_thr):
-                actions[idx] = "hit"
-
-    # ---------------------------------------------------------------------
-    # ÉTAPE 2 : DÉTECTION DES REBONDS AVEC RÈGLES DE SÉQUENCE
-    # ---------------------------------------------------------------------
-    # On repasse pour valider les rebonds en respectant les interdits
-    # - Pas de rebond après un hit sans temps de vol
-    # - Pas de rebond après un rebond sans hit entre les deux
-    can_detect_bounce = True # Autorisé au début du point
-    
-    for i in range(3, n - 3):
-        if np.isnan(ym[i]): continue
-        
-        # Si on croise un HIT détecté à l'étape 1, on met à jour l'état
-        if actions[i] == "hit":
-            last_event_type = "hit"
-            last_event_idx = i
-            can_detect_bounce = True # Un hit autorise à nouveau un rebond
-            continue
-
-        # Logique de détection du rebond
-        near_ground = abs(ym[i]) > 4.5
-        is_choc = (jerk[i] > jerk_thr * 0.8) and (abs(ay[i]) > ay_thr)
-        
-        if near_ground and is_choc and can_detect_bounce:
-            # Vérification du max local
-            if jerk[i] == np.nanmax(jerk[i-2:i+3]):
-                
-                # CONDITION : Pas juste après un hit (min 0.2s de vol)
-                if last_event_type == "hit" and (i - last_event_idx) < int(0.2 * fps):
+        # --------------------------------------------------
+        # CAS A : JOUEUR DU HAUT (ym < 0) - "Subtilité & Apex"
+        # --------------------------------------------------
+        if ym[idx] < -1.0:
+            # Frappe : Balle monte (-Vy), atteint son point le plus haut/profond, 
+            # puis est frappée et redescend brutalement (+Vy pendant longtemps)
+            is_top_hit = (vy[idx-1] < 0 and vy[idx+1] > 0) and count_post > 15
+            
+            if is_top_hit and (jerk[idx] > jerk_thr or turn[idx] > turn_thr):
+                if (idx - last_action_idx) > cooldown:
+                    actions[idx] = "hit"
+                    last_action_idx = idx
                     continue
-                
-                actions[i] = "bounce"
-                last_event_type = "bounce"
-                last_event_idx = i
-                can_detect_bounce = False # INTERDIT de détecter un autre rebond avant le prochain HIT
 
-    # ---------------------------------------------------------------------
-    # PARTIE 3 : NETTOYAGE FINAL
-    # ---------------------------------------------------------------------
-    for i in range(1, n - 1):
+        # --------------------------------------------------
+        # CAS B : JOUEUR DU BAS (ym > 0) - "Rebond puis Frappe"
+        # --------------------------------------------------
+        else:
+            # 1. Rebond (Bounce) : Petite remontée locale (inversion de Vy courte)
+            # Souvent : la balle tombe (+Vy), rebondit (-Vy court), puis est frappée
+            is_bounce = (vy[idx-1] > 0 and vy[idx+1] < 0) and count_post < 12
+            
+            if is_bounce and abs(ym[idx]) > 5.0: # Proche fond de court ou service
+                actions[idx] = "bounce"
+                last_action_idx = idx
+                continue
+
+            # 2. Frappe (Hit) : Point le plus bas de la baisse locale
+            # La balle redescend après le rebond (+Vy) et change de sens (-Vy long)
+            is_bottom_hit = (vy[idx-1] > 0 and vy[idx+1] < 0) and count_post > 15
+            
+            if is_bottom_hit and (jerk[idx] > jerk_thr or turn[idx] > turn_thr):
+                if (idx - last_action_idx) > cooldown:
+                    actions[idx] = "hit"
+                    last_action_idx = idx
+
+    # --- 3. POST-TRAITEMENT : LOGIQUE DE SÉQUENCE ---
+    # Évite les rebonds orphelins ou les successions impossibles
+    for i in range(1, n):
+        # Si on a détecté un "bounce" trop proche d'un "hit" (même événement), on garde le hit
         if actions[i] == "hit":
             for j in range(max(0, i-6), i):
-                if actions[j] == "bounce" and (i - j) < 4:
-                    actions[j] = "air"
+                if actions[j] == "bounce": actions[j] = "air"
 
     return actions
 
 # ======================================================
-# PIPELINE ET VISUALISATION
+# PIPELINE DE TRAITEMENT COMPLET
 # ======================================================
-def run_hybrid_pipeline(json_path: str, cfg: feat_utils.FeatureConfig):
-    # Forcer la fermeture pour mettre à jour le graphique
-    plt.close('all')
-    
+def run_unsupervised_pipeline(json_path: str, cfg: feat_utils.FeatureConfig):
     with open(json_path, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
     
-    frames, xs_px, ys_px, vis, _ = io_utils.extract_series(raw_data)
-    kin = feat_utils.compute_kinematics(frames, np.array(xs_px), np.array(ys_px), cfg)
-    # garder aussi les coordonnées en pixels pour fallback visuel
-    kin["xs_px"] = np.array(xs_px)
-    kin["ys_px"] = np.array(ys_px)
+    # Extraction PCHIP via data_loader
+    frames, xs_px, ys_px, vis, actions = io_utils.extract_series(raw_data)
     
+    # Features en Mètres (Jerk, TurnRate, Vy...) via features.py
+    kin = feat_utils.compute_kinematics(frames, np.array(xs_px), np.array(ys_px), cfg)
+    
+    # Détection avec la nouvelle logique asymétrique
     pred_actions = detect_tennis_events(frames, kin, cfg.fps)
 
     results = {str(fr): {"pred_action": pred_actions[i], "y_m": kin["ym"][i]} 
@@ -124,64 +119,41 @@ def run_hybrid_pipeline(json_path: str, cfg: feat_utils.FeatureConfig):
     return frames, results, kin
 
 def visualize_results(frames, kin, results):
-    ym = kin.get("ym", np.array([np.nan] * len(frames)))
-    ys_px = kin.get("ys_px", None)
+    plt.close('all')  # Fermer toutes les figures précédentes
+    ym = kin["ym"]
     actions = [results[str(f)]["pred_action"] for f in frames]
 
-    non_nan_idx = np.where(~np.isnan(ym))[0]
-    frac_non_nan = len(non_nan_idx) / max(1, len(frames))
-
-    # Fallback vers pixels si peu de valeurs en mètres
-    if len(non_nan_idx) == 0 or frac_non_nan < 0.3:
-        print(f"⚠️ Peu de valeurs en mètres ({len(non_nan_idx)}/{len(frames)}). Fallback vers pixels.")
-        plt.figure(figsize=(16, 8))
-        if ys_px is not None:
-            plt.plot(frames, ys_px, color='magenta', lw=1.5, alpha=0.8, label='Trajectoire Pixels (px)')
-            plt.gca().invert_yaxis()
-            plt.title('Trajectoire (fallback pixels)')
-            plt.ylabel('Y (px)')
-            plt.xlabel('Frame')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.show()
-            return
-        else:
-            print("Aucune donnée pixels disponible pour fallback. Affichage en mètres.")
-
-    # Limiter la plage aux frames non-NaN
-    start_idx, end_idx = non_nan_idx[0], non_nan_idx[-1]
-    sel_frames = frames[start_idx:end_idx + 1]
-    sel_ym = ym[start_idx:end_idx + 1]
-
     plt.figure(figsize=(16, 8))
-    plt.plot(sel_frames, sel_ym, color='black', lw=1.5, alpha=0.6, label="Trajectoire Terrain (m)")
-    plt.axhline(11.88, color='red', ls='--', alpha=0.3, label="Lignes de fond")
-    plt.axhline(-11.88, color='red', ls='--', alpha=0.3)
+    plt.plot(frames, ym, color='black', lw=1.5, alpha=0.6, label="Trajectoire Terrain (m)")
+    
+    # Lignes de court (Perspective TV : 0 = Filet)
+    plt.axhline(11.88, color='red', ls='--', alpha=0.3, label="Baseline Bas")
+    plt.axhline(-11.88, color='red', ls='--', alpha=0.3, label="Baseline Haut")
     plt.axhline(0, color='blue', ls=':', alpha=0.2, label="Filet")
 
-    # Montrer hits/bounces uniquement dans la plage sélectionnée
-    actions_sel = actions[start_idx:end_idx + 1]
-    hit_f = [f for f, a in zip(sel_frames, actions_sel) if a == "hit"]
-    hit_y = [y for y, a in zip(sel_ym, actions_sel) if a == "hit"]
-    bounce_f = [f for f, a in zip(sel_frames, actions_sel) if a == "bounce"]
-    bounce_y = [y for y, a in zip(sel_ym, actions_sel) if a == "bounce"]
+    # Unpacking des détections
+    hit_f = [f for f, a in zip(frames, actions) if a == "hit"]
+    hit_y = [y for y, a in zip(ym, actions) if a == "hit"]
+    bounce_f = [f for f, a in zip(frames, actions) if a == "bounce"]
+    bounce_y = [y for y, a in zip(ym, actions) if a == "bounce"]
+    
+    if hit_f:
+        plt.scatter(hit_f, hit_y, color='limegreen', marker='*', s=350, label='FRARE (Hit)', zorder=5)
+    if bounce_f:
+        plt.scatter(bounce_f, bounce_y, color='orange', marker='o', s=150, label='REBOND (Bounce)', zorder=5)
 
-    plt.scatter(hit_f, hit_y, color='limegreen', marker='*', s=350, label='HIT', zorder=5)
-    plt.scatter(bounce_f, bounce_y, color='orange', marker='o', s=150, label='BOUNCE', zorder=5)
-
-    plt.gca().invert_yaxis()
-    plt.title("Détection Hybride : Séquence Stricte (1 Rebond par Frappe)")
-    plt.ylabel("Profondeur Y (mètres)")
-    plt.legend()
+    plt.gca().invert_yaxis() # Important pour la lecture TV (Haut = Fond de court loin)
+    plt.title("Détection Non Supervisée : Signature Physique (Apex Haut vs Rebond/Frappe Bas)")
+    plt.ylabel("Profondeur sur le terrain (mètres)")
+    plt.xlabel("Frames")
+    plt.legend(loc='upper right')
     plt.grid(True, alpha=0.3)
     plt.show()
 
 if __name__ == "__main__":
-    POINT_ID = 230 
     my_cfg = feat_utils.FeatureConfig(fps=50.0)
-    data_dir = r"c:\Users\tangu\Desktop\Test_Quantum_Tennis\Roland-Garros-Final-Analysis\Data hit & bounce\per_point_v2"
-    input_file = os.path.join(data_dir, f"ball_data_{POINT_ID}.json")
+    input_file = "Data hit & bounce/per_point_v2/ball_data_230.json"
 
     if os.path.exists(input_file):
-        fr, res, kin = run_hybrid_pipeline(input_file, my_cfg)
+        fr, res, kin = run_unsupervised_pipeline(input_file, my_cfg)
         visualize_results(fr, kin, res)

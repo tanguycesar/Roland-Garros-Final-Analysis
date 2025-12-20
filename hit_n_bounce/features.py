@@ -158,7 +158,7 @@ if __name__ == "__main__":
         with open(test_file, 'r') as f:
             ball_data = json.load(f)
         
-        frames, xs, ys, actions = io_utils.extract_series(ball_data)
+        frames, xs, ys, vis, actions = io_utils.extract_series(ball_data)
         
         print(f"📊 {len(frames)} frames chargées")
         print(f"Points valides: {sum(~np.isnan(xs))}")

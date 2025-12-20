@@ -21,7 +21,22 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 2) Data layout (recommended)
+## 2) Configuration
+
+### Vidéo
+
+Le projet nécessite une vidéo du match. Pour ne pas exposer de chemins absolus dans le code :
+
+**Option 1** : Placer la vidéo à la racine du projet avec le nom `Alcaraz_Sinner_2025-001.mp4`
+
+**Option 2** : Créer un fichier `config.txt` à la racine avec le chemin complet :
+```
+C:\chemin\vers\ta\video\Alcaraz_Sinner_2025-001.mp4
+```
+
+Le fichier `config.txt` est ignoré par Git (`.gitignore`).
+
+## 3) Data layout (recommended)
 
 **Do NOT commit the raw dataset/video to Git.**
 
@@ -35,7 +50,7 @@ data/raw/points/
 
 (Any nested structure is fine: the code scans recursively.)
 
-## 3) Train the supervised model
+## 4) Train the supervised model
 
 ```bash
 python main.py train --points_dir data/raw/points --model_path models/supervised_model.joblib
@@ -43,7 +58,7 @@ python main.py train --points_dir data/raw/points --model_path models/supervised
 
 This saves a `joblib` payload containing the sklearn pipeline + feature config.
 
-## 4) Predict on a single point
+## 5) Predict on a single point
 
 Unsupervised:
 
