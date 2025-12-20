@@ -41,28 +41,52 @@ ID_TO_LABEL = {i: k for k, i in LABEL_TO_ID.items()}
 # -------------------------------------------------------------------------
 def make_frame_features(kin: Dict[str, np.ndarray], cfg: FeatureConfig) -> Tuple[np.ndarray, List[str]]:
     """
-    Crée des features basées sur la physique réelle du court.
-   
+    Crée des features basées sur la physique réelle du court avec contexte étendu.
     """
     ym = np.asarray(kin["ym"], float)      # Profondeur (m)
+    xm = np.asarray(kin["xm"], float)      # Largeur (m)
     vy = np.asarray(kin["vy"], float)      # Vitesse verticale (m/s)
+    vx = np.asarray(kin["vx"], float)      # Vitesse horizontale (m/s)
     ay = np.asarray(kin["ay"], float)      # Accélération (m/s²)
+    ax = np.asarray(kin["ax"], float)      # Accélération horizontale
     jerk = np.asarray(kin["jerk"], float)  # Jerk (m/s³)
     turn = np.asarray(kin["turn_rate"], float)
     speed = np.asarray(kin["speed"], float)
+    accel = np.asarray(kin["accel"], float)
 
-    # Contexte spatial et directionnel
+    # Contexte spatial et directionnel enrichi
     dist_baseline = np.abs(np.abs(ym) - 11.88)
+    dist_net = np.abs(ym)
+    dist_sideline = np.abs(xm) - 4.115  # Distance aux lignes de côté (simple)
+    
+    # Inversions de direction
     flip_vy = np.zeros_like(vy)
     flip_vy[1:] = (np.sign(vy[1:]) != np.sign(vy[:-1])).astype(float)
+    flip_vx = np.zeros_like(vx)
+    flip_vx[1:] = (np.sign(vx[1:]) != np.sign(vx[:-1])).astype(float)
+    
+    # Ratios et produits (interactions physiques)
+    speed_safe = np.where(speed > 0.1, speed, 0.1)
+    accel_ratio = accel / speed_safe  # Changement relatif de vitesse
+    jerk_ratio = jerk / (accel + 1e-6)  # Changement relatif d'accélération
+    
+    # Dérivées secondes pour capture de changements brusques
+    djerk = np.gradient(np.nan_to_num(jerk, nan=0.0))
+    dturn = np.gradient(np.nan_to_num(turn, nan=0.0))
 
     signals = {
-        "ym": ym, "vy": vy, "ay": ay, "jk": jerk,
-        "tn": turn, "sp": speed, "db": dist_baseline, "fv": flip_vy
+        "ym": ym, "xm": xm, "vy": vy, "vx": vx, 
+        "ay": ay, "ax": ax, "jk": jerk, "tn": turn, 
+        "sp": speed, "ac": accel,
+        "db": dist_baseline, "dn": dist_net, "ds": dist_sideline,
+        "fvy": flip_vy, "fvx": flip_vx,
+        "ar": accel_ratio, "jr": jerk_ratio,
+        "dj": djerk, "dt": dturn
     }
 
     feature_arrays, feature_names = [], []
-    w = 3 # Fenêtre de 7 frames au total
+    w = 5  # Fenêtre étendue : 11 frames au total (5 avant, frame actuelle, 5 après)
+    
     for name, arr in signals.items():
         arr_clean = np.nan_to_num(arr, nan=0.0)
         for shift in range(-w, w + 1):
@@ -70,7 +94,7 @@ def make_frame_features(kin: Dict[str, np.ndarray], cfg: FeatureConfig) -> Tuple
             if shift > 0: col[:shift] = 0.0
             elif shift < 0: col[shift:] = 0.0
             feature_arrays.append(col)
-            feature_names.append(f"{name}_{shift}")
+            feature_names.append(f"{name}_{shift:+d}")
 
     return np.stack(feature_arrays, axis=1), feature_names
 
@@ -111,10 +135,29 @@ def _make_dataset(points_dir: str | Path, cfg: FeatureConfig) -> Tuple[np.ndarra
 
 def _build_model() -> Pipeline:
     if _HAS_XGB:
-        clf = XGBClassifier(n_estimators=500, max_depth=5, learning_rate=0.05, 
-                            objective="multi:softprob", num_class=3, tree_method="hist", random_state=42)
+        clf = XGBClassifier(
+            n_estimators=800,        # Augmenté de 500 à 800
+            max_depth=8,             # Augmenté de 5 à 8 pour plus de complexité
+            learning_rate=0.03,      # Réduit de 0.05 à 0.03 pour meilleure convergence
+            subsample=0.8,           # Ajout du subsampling
+            colsample_bytree=0.8,    # Ajout du column sampling
+            min_child_weight=3,      # Régularisation
+            gamma=0.1,               # Régularisation
+            objective="multi:softprob", 
+            num_class=3, 
+            tree_method="hist",
+            eval_metric="mlogloss",
+            random_state=42
+        )
     else:
-        clf = HistGradientBoostingClassifier(max_iter=400, random_state=42)
+        clf = HistGradientBoostingClassifier(
+            max_iter=600,            # Augmenté de 400 à 600
+            max_depth=12,            # Augmenté pour plus de complexité
+            learning_rate=0.05,      # Ajusté
+            min_samples_leaf=5,      # Régularisation
+            l2_regularization=0.1,   # Régularisation L2
+            random_state=42
+        )
     return Pipeline(steps=[("scaler", StandardScaler()), ("clf", clf)])
 
 
