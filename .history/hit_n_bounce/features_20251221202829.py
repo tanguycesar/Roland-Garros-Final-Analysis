@@ -149,7 +149,7 @@ if __name__ == "__main__":
     from pathlib import Path
     import data_loader as io_utils
     
-    test_file = Path(r"C:\Users\tangu\OneDrive\Desktop\Cours\3 - TRIED\STAGE\Roland-Garros-Final-Analysis\Data hit & bounce\per_point_v2\ball_data_230.json")
+    test_file = Path(r"c:\Users\tangu\Desktop\Test_Quantum_Tennis\Roland-Garros-Final-Analysis\Data hit & bounce\per_point_v2\ball_data_230.json")
     
     print(f"🔍 Recherche du fichier: {test_file}")
     
