@@ -22,3 +22,5 @@ config.txt
 __pycache__/
 *.pyc
 .venv/
+
+.history/
