@@ -131,15 +131,15 @@ class TimeSeriesWindowDataset:
     Paramètres:
     -----------
     window_size : int
-        Taille de la fenêtre (ex: 31 frames = ±15 autour du centre)
+        Taille de la fenêtre (ex: 15 frames = ±7 autour du centre)
     stride : int
         Pas de décalage entre fenêtres (1 = toutes les frames)
     
     Exemple:
     --------
-    >>> windower = TimeSeriesWindowDataset(window_size=31, stride=1)
+    >>> windower = TimeSeriesWindowDataset(window_size=15, stride=1)
     >>> X_windows, y_windows, indices = windower.create_windows(features, labels)
-    >>> print(X_windows.shape)  # (n_windows, 31, 9)
+    >>> print(X_windows.shape)  # (n_windows, 15, 9)
     """
     
     def __init__(self, window_size: int = 31, stride: int = 1):
@@ -212,7 +212,9 @@ class FocalLoss(keras.losses.Loss):
     
     def __init__(self, alpha: List[float] = None, gamma: float = 2.0, **kwargs):
         super().__init__(**kwargs)
-        self.alpha = alpha if alpha is not None else [0.05, 0.475, 0.475]
+        # Alphas stabilisés pour éviter que le modèle ne soit terrorisé par la classe air
+        # Air: 0.3, Hit: 0.35, Bounce: 0.35 (équilibre pour début d'entraînement)
+        self.alpha = alpha if alpha is not None else [0.3, 0.35, 0.35]
         self.gamma = gamma
         self.alpha_tensor = tf.constant(self.alpha, dtype=tf.float32)
         
@@ -238,10 +240,11 @@ class FocalLoss(keras.losses.Loss):
         # Poids alpha par classe
         alpha_factor = tf.reduce_sum(y_true_oh * self.alpha_tensor, axis=-1)
         
-        # Focal Loss
+        # Focal Loss avec scaling ×100 pour éviter les valeurs micro
         focal_loss = alpha_factor * modulating_factor * tf.reduce_sum(ce, axis=-1)
         
-        return tf.reduce_mean(focal_loss)
+        # SCALING CRITIQUE: ×100 pour redonner du punch à l'optimiseur
+        return tf.reduce_mean(focal_loss) * 100.0
     
     def get_config(self):
         config = super().get_config()
@@ -302,7 +305,7 @@ def build_cnn_lstm_model(
     
     inputs = layers.Input(shape=(window_size, n_features), name="input_window")
     
-    # ===== CNN Block: Extraction de features locales =====
+    # ===== CNN Block: Extraction de features locales (SIMPLIFIÉ) =====
     x = layers.Conv1D(
         filters=64, kernel_size=5, padding='same',
         activation='relu', kernel_regularizer=regularizers.l2(0.001),
@@ -317,26 +320,13 @@ def build_cnn_lstm_model(
     )(x)
     x = layers.BatchNormalization()(x)
     x = layers.MaxPooling1D(pool_size=2, name='maxpool_1')(x)
-    
-    x = layers.Conv1D(
-        filters=256, kernel_size=3, padding='same',
-        activation='relu', kernel_regularizer=regularizers.l2(0.001),
-        name='conv1d_3'
-    )(x)
-    x = layers.BatchNormalization()(x)
     x = layers.Dropout(0.3)(x)
     
-    # ===== Bi-LSTM Block: Cohérence temporelle =====
+    # ===== Bi-LSTM Block: Cohérence temporelle (1 SEULE COUCHE, SANS recurrent_dropout) =====
     x = layers.Bidirectional(
-        layers.LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2,
+        layers.LSTM(128, return_sequences=True, dropout=0.3,
                    kernel_regularizer=regularizers.l2(0.001)),
         name='bilstm_1'
-    )(x)
-    
-    x = layers.Bidirectional(
-        layers.LSTM(64, return_sequences=True, dropout=0.3, recurrent_dropout=0.2,
-                   kernel_regularizer=regularizers.l2(0.001)),
-        name='bilstm_2'
     )(x)
     
     x = layers.GlobalAveragePooling1D(name='global_avg_pool')(x)
@@ -569,7 +559,48 @@ def extract_raw_features(kin: Dict[str, np.ndarray]) -> Tuple[np.ndarray, List[s
 
 
 # =========================================================================
-# 7. ENTRAÎNEMENT
+# 7. DEBUG & VISUALISATION DES DONNÉES
+# =========================================================================
+
+def debug_check_windows(X: np.ndarray, y: np.ndarray, n_samples: int = 5):
+    """
+    🔍 Fonction de debug critique pour visualiser ce que le modèle voit.
+    
+    Vérifie que les fenêtres sont correctement alignées avec les labels
+    et que les features contiennent des signaux discriminants.
+    """
+    # Cherche des indices où il y a des Hits (y=1)
+    hit_indices = np.where(y == 1)[0]
+    if len(hit_indices) == 0: 
+        print("❌ AUCUN HIT TROUVÉ DANS LE DATASET - PROBLÈME CRITIQUE!")
+        return
+    
+    print(f"\n🔍 DEBUG: Visualisation de {min(n_samples, len(hit_indices))} fenêtres Hit")
+    
+    plt.figure(figsize=(15, n_samples * 3))
+    for i in range(min(n_samples, len(hit_indices))):
+        idx = hit_indices[i]
+        window = X[idx]  # (31, 9)
+        
+        plt.subplot(n_samples, 1, i+1)
+        # Affiche Jerk (colonne 7) et Vy (colonne 3) normalisés
+        plt.plot(window[:, 7], label="Jerk (Normalisé)", linewidth=2)
+        plt.plot(window[:, 3], label="Vy (Normalisé)", linewidth=2)
+        plt.axvline(15, color='red', linestyle='--', linewidth=2, label="Frame Centrale (HIT)")
+        plt.title(f"Fenêtre #{idx} - Label: {ID_TO_LABEL[y[idx]]}")
+        plt.xlabel("Frame dans la fenêtre (0-30)")
+        plt.ylabel("Valeur normalisée")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig("models/debug_windows.png", dpi=150, bbox_inches='tight')
+    print(f"   ✅ Graphique sauvegardé: models/debug_windows.png")
+    plt.close()
+
+
+# =========================================================================
+# 8. ENTRAÎNEMENT
 # =========================================================================
 
 def train_cnn_lstm_model(
@@ -606,6 +637,9 @@ def train_cnn_lstm_model(
     X_scaled_flat = scaler.fit_transform(X_flat)
     X_scaled = X_scaled_flat.reshape(n_samples, ws, nf)
     
+    # Protection contre NaN/Inf après normalisation
+    X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+    
     # Split
     n_val = int(len(X_scaled) * validation_split)
     indices = np.arange(len(X_scaled))
@@ -618,25 +652,35 @@ def train_cnn_lstm_model(
     
     print(f"📈 Train: {len(X_train):,} | Validation: {len(X_val):,}")
     
+    # 🔍 DEBUG CRITIQUE: Visualise les fenêtres avant l'entraînement
+    print(f"\n🔍 Lancement du debug des fenêtres...")
+    debug_check_windows(X_train, y_train, n_samples=5)
+    
     # Modèle
-    print(f"\n🏗️  Construction du modèle...")
+    print(f"\n🏭️  Construction du modèle...")
     model = build_cnn_lstm_model(window_size, n_features, n_classes=3)
     
-    # Loss
+    # Loss avec class_weights pour équilibrage (plus stable que Focal Loss)
     if focal_loss:
-        if alpha is None:
-            alpha = [len(y)/(3*c) if c>0 else 1.0 for c in class_counts]
-            alpha = [a/sum(alpha) for a in alpha]
-        print(f"🎯 Focal Loss - Alpha: {[f'{a:.3f}' for a in alpha]}")
-        loss_fn = FocalLoss(alpha=alpha, gamma=2.0)
+        # Calcul automatique des class_weights (inverse de la fréquence)
+        class_weights = {}
+        for i, count in enumerate(class_counts):
+            if count > 0:
+                class_weights[i] = len(y) / (len(class_counts) * count)
+            else:
+                class_weights[i] = 1.0
+        
+        print(f"🎯 Class Weights: {class_weights}")
+        loss_fn = 'sparse_categorical_crossentropy'
     else:
+        class_weights = None
         loss_fn = 'sparse_categorical_crossentropy'
     
-    # Compilation
+    # Compilation avec learning_rate stabilisé (0.001)
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=0.001),
         loss=loss_fn,
-        metrics=['accuracy', keras.metrics.Precision(name='precision'), keras.metrics.Recall(name='recall')]
+        metrics=['accuracy', keras.metrics.SparseCategoricalAccuracy(name='sparse_acc')]
     )
     
     model.summary()
@@ -655,6 +699,7 @@ def train_cnn_lstm_model(
         validation_data=(X_val, y_val),
         epochs=epochs,
         batch_size=batch_size,
+        class_weight=class_weights if focal_loss else None,
         callbacks=callbacks,
         verbose=1
     )
@@ -695,7 +740,7 @@ def train_cnn_lstm_model(
 
 
 # =========================================================================
-# 8. PIPELINE COMPLET
+# 9. PIPELINE COMPLET
 # =========================================================================
 
 def run_cnn_lstm_pipeline(
@@ -802,7 +847,7 @@ def run_cnn_lstm_pipeline(
 
 
 # =========================================================================
-# 9. MAIN
+# 10. MAIN
 # =========================================================================
 
 if __name__ == "__main__":
@@ -812,19 +857,19 @@ if __name__ == "__main__":
     
     cfg = FeatureConfig(fps=50.0, local_window=5)
     
-    # Hyperparamètres
-    WINDOW_SIZE = 31
+    # Hyperparamètres OPTIMISÉS pour stabilité
+    WINDOW_SIZE = 15      # Réduit de 31 à 15 (±7 frames = 280ms contexte)
     STRIDE = 1
     EPOCHS = 50
     BATCH_SIZE = 256
-    USE_FOCAL_LOSS = True
+    USE_FOCAL_LOSS = True  # Utilise maintenant class_weights + CrossEntropy
     
     print(f"Configuration:")
-    print(f"  Window Size: {WINDOW_SIZE} frames")
+    print(f"  Window Size: {WINDOW_SIZE} frames (±{WINDOW_SIZE//2} contexte)")
     print(f"  Stride: {STRIDE}")
     print(f"  Epochs: {EPOCHS}")
     print(f"  Batch Size: {BATCH_SIZE}")
-    print(f"  Loss: {'Focal Loss' if USE_FOCAL_LOSS else 'CrossEntropy'}")
+    print(f"  Loss: CrossEntropy + Class Weights")
     
     model, results = run_cnn_lstm_pipeline(
         cfg=cfg,

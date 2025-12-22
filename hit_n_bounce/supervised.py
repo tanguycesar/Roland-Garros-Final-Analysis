@@ -226,17 +226,23 @@ def train_supervised(points_dir: str | Path, model_path: str | Path, cfg: Featur
     f1s = []
 
     print("\n--- Validation Croisée (GroupKFold) ---")
+    print("⏳ Cela peut prendre quelques minutes (5 folds sur 113k frames)...\n")
+    
     for fold, (tr, te) in enumerate(gkf.split(X, y, groups=groups), 1):
+        print(f"🔄 Fold {fold}/5 - Entraînement sur {len(tr)} frames...", end=" ", flush=True)
         model.fit(X[tr], y[tr], clf__sample_weight=sw[tr] if _HAS_XGB else None)
+        print("✓ Évaluation...", end=" ", flush=True)
         y_pred = model.predict(X[te])
         score = f1_score(y[te], y_pred, average="macro")
         f1s.append(score)
-        print(f"Pli {fold}: F1-Macro = {score:.4f}")
+        print(f"F1-Macro = {score:.4f} ✓")
 
-    print(f"\nScore F1-Macro moyen: {np.mean(f1s):.4f}")
+    print(f"\n✅ Score F1-Macro moyen: {np.mean(f1s):.4f}")
     
     print("\n--- Entraînement Final ---")
+    print("🔄 Entraînement sur l'ensemble complet...", end=" ", flush=True)
     model.fit(X, y, clf__sample_weight=sw if _HAS_XGB else None)
+    print("✓")
     print(classification_report(y, model.predict(X), target_names=LABELS))
 
     dump({"model": model, "feature_config": asdict(cfg), "labels": list(LABELS)}, model_path)
@@ -244,7 +250,8 @@ def train_supervised(points_dir: str | Path, model_path: str | Path, cfg: Featur
 
 
 if __name__ == "__main__":
-    TRAIN_DIR = r"c:\Users\tangu\Desktop\Test_Quantum_Tennis\Roland-Garros-Final-Analysis\Data hit & bounce\per_point_v2"
+    # Chemin relatif depuis la racine du projet
+    TRAIN_DIR = Path("Data hit & bounce") / "per_point_v2"
     MODEL_FILE = "models/tennis_event_classifier.joblib"
     
     cfg = FeatureConfig()
