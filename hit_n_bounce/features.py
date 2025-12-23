@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 @dataclass
 class FeatureConfig:
-    """Configuration pour calcul des features cinématiques."""
+    """Configuration pour calcul des features cinématiques"""
     fps: float = 50.0          # Framerate vidéo (images/seconde)
     local_window: int = 5      # Taille fenêtre pour dérivées locales
 
