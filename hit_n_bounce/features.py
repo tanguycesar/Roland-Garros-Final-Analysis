@@ -8,19 +8,25 @@ import matplotlib.pyplot as plt
 
 @dataclass
 class FeatureConfig:
-    fps: float = 50.0 
-    local_window: int = 5
+    """Configuration pour calcul des features cinématiques."""
+    fps: float = 50.0          # Framerate vidéo (images/seconde)
+    local_window: int = 5      # Taille fenêtre pour dérivées locales
 
 # ======================================================
-# 1. CONVERSION PIXELS -> MÈTRES
+# 1. CONVERSION PIXELS -> MÈTRES (Calibration caméra)
 # ======================================================
+# Utilise ../Camera_Params_Distorted.npz généré par calibration_distortion.py
+
 def load_calibration(path="Camera_Params_Distorted.npz"):
+    """Charge les paramètres de calibration caméra (matrice, distorsion, rotation, translation)."""
     if not os.path.exists(path):
         raise FileNotFoundError(f"Le fichier {path} est introuvable.")
     data = np.load(path)
     return data['camera_matrix'], data['dist_coeffs'], data['rvec'], data['tvec']
 
 def pixels_to_world_meters(xs: np.ndarray, ys: np.ndarray, mtx, dist, rvec, tvec):
+    """Projette des coordonnées pixels (x,y) vers le plan du terrain en mètres (xm,ym).
+    Applique correction de distorsion puis homographie inverse."""
     pts_img = np.array([[[x, y]] for x, y in zip(xs, ys)], dtype=np.float32)
     pts_undistorted = cv2.undistortPoints(pts_img, mtx, dist, P=mtx)
     R, _ = cv2.Rodrigues(rvec)
@@ -38,9 +44,12 @@ def pixels_to_world_meters(xs: np.ndarray, ys: np.ndarray, mtx, dist, rvec, tvec
     return np.array(pts_world)
 
 # ======================================================
-# 2. CALCUL CINÉMATIQUE ROBUSTE
+# 2. CALCUL CINÉMATIQUE (Vitesse, Accélération, Jerk)
 # ======================================================
+# Features utilisées par supervised.py, unsupervised.py, cnn_lstm_detector.py
+
 def safe_gradient(arr: np.ndarray, dt: float) -> np.ndarray:
+    """Calcule le gradient temporel en ignorant les NaN (données manquantes)."""
     grad = np.full_like(arr, np.nan)
     valid_idx = np.where(~np.isnan(arr))[0]
     if len(valid_idx) < 2: return grad
@@ -49,6 +58,11 @@ def safe_gradient(arr: np.ndarray, dt: float) -> np.ndarray:
     return grad
 
 def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, cfg: FeatureConfig) -> Dict[str, np.ndarray]:
+    """Calcule toutes les features physiques depuis les coordonnées pixels.
+    
+    Retourne dict avec: xm, ym (mètres), vx, vy (m/s), ax, ay (m/s²), 
+    speed, accel, jerk (m/s³), turn_rate (rad/s), ground_y (estimation sol).
+    """
     mtx, dist, rvec, tvec = load_calibration()
     pts_meters = pixels_to_world_meters(xs_px, ys_px, mtx, dist, rvec, tvec)
     xm, ym = pts_meters[:, 0], pts_meters[:, 1]
@@ -68,7 +82,7 @@ def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, 
     if len(valid_idx) > 2:
         turn_rate[valid_idx] = np.abs(np.gradient(np.unwrap(angles[valid_idx]), valid_idx * dt))
     
-    # Ground estimation (99e percentile de Y en pixels)
+    # Estimation ligne de sol (percentile 99 de Y en pixels)
     ground_y = np.nanpercentile(ys_px, 99) if len(ys_px) > 0 else 0.0
 
     return {
@@ -78,19 +92,20 @@ def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, 
     }
 
 # ======================================================
-# 3. SORTIE VISUELLE : LE DASHBOARD
+# 3. DASHBOARD DE VISUALISATION
 # ======================================================
+# Utilisé par data_loader.py, unsupervised.py pour validation visuelle
+
 def visualize_dashboard(frames: List[int], kin: Dict[str, np.ndarray], detections: List[str] | None = None):
-    """
-    Génère une vue complète pour valider la physique et la détection.
-    """
+    """Affiche dashboard multi-graphiques : trajectoire 2D, profondeur, vitesse, jerk, turn_rate.
+    Superpose optionnellement les détections hit/bounce."""
     fig = plt.figure(figsize=(18, 12))
     grid = plt.GridSpec(4, 2, hspace=0.3, wspace=0.2)
 
-    # --- A. Vue 2D du terrain (Top-down) ---
+    # Vue 2D terrain (plan x,y en mètres)
     ax_map = fig.add_subplot(grid[0:2, 0])
     ax_map.plot(kin["xm"], kin["ym"], 'k-', alpha=0.4, label="Trajectoire")
-    # Dessin des limites du court (Simple)
+    # Limites court simple (8.23m × 23.77m)
     ax_map.plot([-4.11, 4.11, 4.11, -4.11, -4.11], [11.88, 11.88, -11.88, -11.88, 11.88], 'r--', lw=1, label="Court")
     ax_map.axhline(0, color='blue', lw=1, alpha=0.5, label="Filet")
     ax_map.set_title("Vue Terrain (mètres)")
@@ -113,13 +128,13 @@ def visualize_dashboard(frames: List[int], kin: Dict[str, np.ndarray], detection
     ax_sp.set_title("Vitesse (km/h)")
     ax_sp.set_ylabel("km/h")
 
-    # --- D. Le JERK (Détection des impacts) ---
+    # Jerk (dérivée de l'accélération) - Principal signal pour détection impacts
     ax_jk = fig.add_subplot(grid[2, :])
     ax_jk.plot(frames, kin["jerk"], color='red', lw=1.2, label="Jerk (m/s³)")
     thr = np.nanpercentile(kin["jerk"], 97)
     ax_jk.axhline(thr, color='black', ls='--', alpha=0.6, label=f"Seuil 97% ({thr:.0f})")
     ax_jk.set_title("Signal de Détection (JERK)")
-    ax_jk.set_ylim(0, thr * 4) # On cadre pour voir les pics
+    ax_jk.set_ylim(0, thr * 4)  # Zoom sur pics pertinents
     ax_jk.legend()
 
     # --- E. Turn Rate (Direction) ---
@@ -142,33 +157,30 @@ def visualize_dashboard(frames: List[int], kin: Dict[str, np.ndarray], detection
     plt.show()
 
 # ======================================================
-# EXECUTION DE TEST
+# SCRIPT DE TEST (python -m hit_n_bounce.features)
 # ======================================================
 if __name__ == "__main__":
     import json
     from pathlib import Path
     import data_loader as io_utils
     
-    test_file = Path(r"C:\Users\tangu\OneDrive\Desktop\Cours\3 - TRIED\STAGE\Roland-Garros-Final-Analysis\Data hit & bounce\per_point_v2\ball_data_230.json")
-    
-    print(f"🔍 Recherche du fichier: {test_file}")
+    # Chemin relatif depuis la racine du projet
+    test_file = Path("Data hit & bounce") / "per_point_v2" / "ball_data_230.json"
     
     if test_file.exists():
-        print("✅ Fichier trouvé, chargement...")
+        # Charge trajectoire depuis data_loader.py
         with open(test_file, 'r') as f:
             ball_data = json.load(f)
-        
         frames, xs, ys, vis, actions = io_utils.extract_series(ball_data)
         
-        print(f"📊 {len(frames)} frames chargées")
-        print(f"Points valides: {sum(~np.isnan(xs))}")
+        print(f"{len(frames)} frames | {sum(~np.isnan(xs))} points valides")
         
+        # Calcule features cinématiques
         cfg = FeatureConfig()
-        print("⚙️ Calcul des features cinématiques...")
         kin = compute_kinematics(frames, np.array(xs), np.array(ys), cfg)
         
-        print("📈 Affichage du dashboard...")
+        # Affiche dashboard
         visualize_dashboard(frames, kin, actions)
     else:
-        print(f"❌ Fichier introuvable: {test_file}")
-        print(f"Répertoire actuel: {os.getcwd()}")
+        print(f"Fichier introuvable: {test_file}")
+        print("Lancer depuis la racine du projet")

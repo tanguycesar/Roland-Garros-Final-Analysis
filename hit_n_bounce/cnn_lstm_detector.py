@@ -564,7 +564,7 @@ def extract_raw_features(kin: Dict[str, np.ndarray]) -> Tuple[np.ndarray, List[s
 
 def debug_check_windows(X: np.ndarray, y: np.ndarray, n_samples: int = 5):
     """
-    🔍 Fonction de debug critique pour visualiser ce que le modèle voit.
+    Fonction de debug critique pour visualiser ce que le modèle voit.
     
     Vérifie que les fenêtres sont correctement alignées avec les labels
     et que les features contiennent des signaux discriminants.
@@ -572,10 +572,10 @@ def debug_check_windows(X: np.ndarray, y: np.ndarray, n_samples: int = 5):
     # Cherche des indices où il y a des Hits (y=1)
     hit_indices = np.where(y == 1)[0]
     if len(hit_indices) == 0: 
-        print("❌ AUCUN HIT TROUVÉ DANS LE DATASET - PROBLÈME CRITIQUE!")
+        print("AUCUN HIT TROUVÉ DANS LE DATASET - PROBLÈME CRITIQUE!")
         return
     
-    print(f"\n🔍 DEBUG: Visualisation de {min(n_samples, len(hit_indices))} fenêtres Hit")
+    print(f"\nDEBUG: Visualisation de {min(n_samples, len(hit_indices))} fenêtres Hit")
     
     plt.figure(figsize=(15, n_samples * 3))
     for i in range(min(n_samples, len(hit_indices))):
@@ -621,16 +621,16 @@ def train_cnn_lstm_model(
         raise RuntimeError("TensorFlow requis")
     
     print(f"\n{'='*70}")
-    print(f"🏗️  ENTRAÎNEMENT: Modèle Hybride 1D-CNN + Bi-LSTM")
+    print(f"ENTRAINEMENT: Modèle Hybride 1D-CNN + Bi-LSTM")
     print(f"{'='*70}")
-    print(f"📊 Dataset: {X_windows.shape[0]:,} samples | Window: {window_size} frames | Features: {n_features}")
+    print(f"Dataset: {X_windows.shape[0]:,} samples | Window: {window_size} frames | Features: {n_features}")
     
     class_counts = np.bincount(y)
     for i, label in enumerate(LABELS):
         print(f"   {label:8s}: {class_counts[i]:,} ({class_counts[i]/len(y)*100:.2f}%)")
     
     # Normalisation
-    print(f"\n🔧 Normalisation des features...")
+    print(f"\nNormalisation des features...")
     scaler = StandardScaler()
     n_samples, ws, nf = X_windows.shape
     X_flat = X_windows.reshape(-1, nf)
@@ -650,14 +650,14 @@ def train_cnn_lstm_model(
     X_val = X_scaled[indices[:n_val]]
     y_val = y[indices[:n_val]]
     
-    print(f"📈 Train: {len(X_train):,} | Validation: {len(X_val):,}")
+    print(f"Train: {len(X_train):,} | Validation: {len(X_val):,}")
     
-    # 🔍 DEBUG CRITIQUE: Visualise les fenêtres avant l'entraînement
-    print(f"\n🔍 Lancement du debug des fenêtres...")
+    # DEBUG CRITIQUE: Visualise les fenêtres avant l'entraînement
+    print(f"\nLancement du debug des fenêtres...")
     debug_check_windows(X_train, y_train, n_samples=5)
     
     # Modèle
-    print(f"\n🏭️  Construction du modèle...")
+    print(f"\nConstruction du modèle...")
     model = build_cnn_lstm_model(window_size, n_features, n_classes=3)
     
     # Loss avec class_weights pour équilibrage (plus stable que Focal Loss)
@@ -670,7 +670,7 @@ def train_cnn_lstm_model(
             else:
                 class_weights[i] = 1.0
         
-        print(f"🎯 Class Weights: {class_weights}")
+        print(f"Class Weights: {class_weights}")
         loss_fn = 'sparse_categorical_crossentropy'
     else:
         class_weights = None
@@ -693,7 +693,7 @@ def train_cnn_lstm_model(
     ]
     
     # Entraînement
-    print(f"\n🚀 Début de l'entraînement...\n")
+    print(f"\nDébut de l'entraînement...\n")
     history = model.fit(
         X_train, y_train,
         validation_data=(X_val, y_val),
@@ -705,7 +705,7 @@ def train_cnn_lstm_model(
     )
     
     # Évaluation
-    print(f"\n📊 Évaluation...")
+    print(f"\nÉvaluation...")
     y_proba = model.predict(X_scaled, verbose=0)
     y_pred = np.argmax(y_proba, axis=1)
     
@@ -713,7 +713,7 @@ def train_cnn_lstm_model(
     metrics = metrics_obj.compute_metrics(y, y_pred, y_proba)
     
     print(f"\n{'='*70}")
-    print(f"✅ RÉSULTATS FINAUX")
+    print(f"RÉSULTATS FINAUX")
     print(f"{'='*70}")
     print(f"F1-Score Macro: {metrics['f1_macro']:.4f}")
     print(f"F1-Score Weighted: {metrics['f1_weighted']:.4f}")
@@ -756,11 +756,11 @@ def run_cnn_lstm_pipeline(
     import json
     
     print(f"\n{'='*70}")
-    print(f"🎾 PIPELINE DEEP LEARNING - DÉTECTION D'ÉVÉNEMENTS TENNIS")
+    print(f"PIPELINE DEEP LEARNING - DÉTECTION D'ÉVÉNEMENTS TENNIS")
     print(f"{'='*70}\n")
     
     # Chargement
-    print(f"📁 Chargement des données...")
+    print(f"Chargement des données...")
     data_folder = Path("Data hit & bounce/per_point_v2")
     json_files = sorted(data_folder.glob("ball_data_*.json"))
     print(f"   Fichiers trouvés: {len(json_files)}")
@@ -791,11 +791,11 @@ def run_cnn_lstm_pipeline(
     y_all = np.concatenate(all_y)
     groups_all = np.array(all_groups)
     
-    print(f"\n✅ Dataset brut: {len(X_raw_all):,} frames | Features: {X_raw_all.shape[1]}")
+    print(f"\nDataset brut: {len(X_raw_all):,} frames | Features: {X_raw_all.shape[1]}")
     print(f"   Distribution: {dict(zip(LABELS, np.bincount(y_all)))}")
     
     # Fenêtrage
-    print(f"\n🪟 Création des fenêtres glissantes (size={window_size}, stride={stride})...")
+    print(f"\nCréation des fenêtres glissantes (size={window_size}, stride={stride})...")
     windower = TimeSeriesWindowDataset(window_size=window_size, stride=stride)
     X_windows, y_windows, _ = windower.create_windows(X_raw_all, y_all)
     
@@ -818,10 +818,10 @@ def run_cnn_lstm_pipeline(
     import pickle
     with open(model_dir / "feature_scaler.pkl", "wb") as f:
         pickle.dump(results["scaler"], f)
-    print(f"💾 Scaler sauvegardé: models/feature_scaler.pkl")
+    print(f"Scaler sauvegardé: models/feature_scaler.pkl")
     
     # Visualisations
-    print(f"\n📊 Génération des visualisations...")
+    print(f"\nGénération des visualisations...")
     
     X_scaled = results["scaler"].transform(X_windows.reshape(-1, X_raw_all.shape[1])).reshape(X_windows.shape)
     y_proba = model.predict(X_scaled, verbose=0)
@@ -840,7 +840,7 @@ def run_cnn_lstm_pipeline(
     print(f"   ✓ Matrice de confusion: confusion_matrix.png")
     
     print(f"\n{'='*70}")
-    print(f"✅ PIPELINE TERMINÉ AVEC SUCCÈS")
+    print(f"PIPELINE TERMINÉ AVEC SUCCÈS")
     print(f"{'='*70}\n")
     
     return model, results
@@ -852,7 +852,7 @@ def run_cnn_lstm_pipeline(
 
 if __name__ == "__main__":
     if not _HAS_TF:
-        print("❌ TensorFlow non disponible. Installer: pip install tensorflow")
+        print("TensorFlow non disponible. Installer: pip install tensorflow")
         exit(1)
     
     cfg = FeatureConfig(fps=50.0, local_window=5)
@@ -880,4 +880,4 @@ if __name__ == "__main__":
         use_focal_loss=USE_FOCAL_LOSS
     )
     
-    print("\n🎾 Modèle prêt pour l'inférence!")
+    print("\nModèle prêt pour l'inférence!")

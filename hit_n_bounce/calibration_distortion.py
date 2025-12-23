@@ -1,15 +1,21 @@
+"""Calibration caméra 21 points avec correction de distorsion.
+
+Génère Camera_Params_Distorted.npz utilisé par features.py pour conversion pixels→mètres.
+Lit une frame de vidéo et demande de cliquer 21 points de référence sur le court.
+"""
 import cv2
 import numpy as np
 import os
 
-# --- CONFIGURATION ---
-# Le script cherche la vidéo dans plusieurs emplacements possibles
-# Tu peux aussi créer un fichier config.txt avec le chemin de ta vidéo
-VIDEO_FILENAME = "Alcaraz_Sinner_2025-001.mp4"  # Nom du fichier vidéo (sans chemin)
+# ======================================================
+# CONFIGURATION
+# ======================================================
+# Cherche la vidéo dans: racine projet, dossier videos/, ou chemin depuis config.txt
+VIDEO_FILENAME = "Alcaraz_Sinner_2025-001.mp4"
 FRAME_TO_USE = 400000
 
 def find_video_path(filename):
-    """Cherche la vidéo dans plusieurs emplacements possibles"""
+    """Recherche la vidéo dans plusieurs emplacements (racine, videos/, config.txt)."""
     # Chercher dans la racine du projet
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     possible_paths = [
@@ -18,7 +24,7 @@ def find_video_path(filename):
         os.path.join(os.getcwd(), filename),
     ]
     
-    # Chercher un fichier config.txt à la racine du projet
+    # Lecture optionnelle de config.txt (exemple fourni dans config.txt.example)
     config_file = os.path.join(project_root, "config.txt")
     if os.path.exists(config_file):
         with open(config_file, 'r', encoding='utf-8') as f:
@@ -37,17 +43,18 @@ def find_video_path(filename):
 
 VIDEO_PATH = find_video_path(VIDEO_FILENAME) 
 
-# --- POINTS DU TERRAIN (Mètres) ---
-# Largeur double: 10.97m (±5.485m du centre)
-# Largeur simple: 8.23m (±4.115m du centre)
-# Longueur totale: 23.77m (±11.885m du centre)
+# ======================================================
+# POINTS DE RÉFÉRENCE DU COURT (Coordonnées terrain 3D)
+# ======================================================
+# Dimensions officielles ITF: 10.97m × 23.77m (doubles), 8.23m × 23.77m (simples)
+# Origine au centre du filet, Z=0 (plan du sol)
 OBJECT_POINTS = np.array([
-    # Ligne de fond HAUT (5 points: coin double, coin simple, centre, coin simple, coin double)
-    [-5.485,  11.885, 0],  # 1. Fond Haut GAUCHE (coin double)
-    [-4.115,  11.885, 0],  # 2. Fond Haut GAUCHE (coin simple)
-    [ 0.0,    11.885, 0],  # 3. Fond Haut CENTRE (petit trait)
-    [ 4.115,  11.885, 0],  # 4. Fond Haut DROITE (coin simple)
-    [ 5.485,  11.885, 0],  # 5. Fond Haut DROITE (coin double)
+    # Ligne de fond (+Y) : 5 points de gauche à droite
+    [-5.485,  11.885, 0],  # 1. Coin double gauche
+    [-4.115,  11.885, 0],  # 2. Coin simple gauche
+    [ 0.0,    11.885, 0],  # 3. Centre (marque)
+    [ 4.115,  11.885, 0],  # 4. Coin simple droit
+    [ 5.485,  11.885, 0],  # 5. Coin double droit
     
     # Ligne de service HAUT (3 points: coins simples + T central)
     [-4.115,   6.40,  0],  # 6. Service Haut GAUCHE (simple)
@@ -98,12 +105,13 @@ POINT_NAMES = [
     "21. Fond Bas DROITE (coin double)"
 ]
 
-NUM_POINTS = 21  # Nombre total de points à cliquer
+NUM_POINTS = 21
 
 clicked_points = []
 img_display = None
 
 def click_event(event, x, y, flags, param):
+    """Callback OpenCV : enregistre les clics utilisateur et affiche numéros."""
     global clicked_points, img_display
     if event == cv2.EVENT_LBUTTONDOWN:
         if len(clicked_points) < NUM_POINTS:
@@ -120,6 +128,7 @@ def click_event(event, x, y, flags, param):
                 print(f"Tous les {NUM_POINTS} points ont été cliqués!")
 
 def run_advanced_calibration():
+    """Pipeline complet : chargement vidéo, sélection interactive, calibration OpenCV, sauvegarde NPZ."""
     global img_display
     
     if not os.path.exists(VIDEO_PATH):
@@ -155,10 +164,10 @@ def run_advanced_calibration():
     img_points = np.array([clicked_points], dtype=np.float32)
     obj_points = np.array([OBJECT_POINTS], dtype=np.float32)
         
-    # Flags pour aider l'algo
+    # Flags OpenCV : fixe le point principal et l'aspect ratio pour stabiliser l'optimisation
     flags = cv2.CALIB_FIX_PRINCIPAL_POINT | cv2.CALIB_FIX_ASPECT_RATIO
     
-    # Guess initial
+    # Matrice initiale (focale ~1.5× largeur image)
     camera_matrix_init = np.array([[w*1.5, 0, w/2], [0, w*1.5, h/2], [0, 0, 1]], dtype=np.float32)
 
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
@@ -169,7 +178,7 @@ def run_advanced_calibration():
     print("Matrice de distorsion trouvée:")
     print(dist)
 
-    # Sauvegarde
+    # Sauvegarde matrice caméra, distorsion, rotation, translation
     rvec = rvecs[0]
     tvec = tvecs[0]
     
@@ -180,19 +189,19 @@ def run_advanced_calibration():
              tvec=tvec)
     print("\n✓ Paramètres sauvegardés dans Camera_Params_Distorted.npz")
 
-    # --- VERIFICATION ---
+    # Vérification : reprojette les points 3D pour comparer avec les clics
     new_img_points, _ = cv2.projectPoints(OBJECT_POINTS, rvec, tvec, mtx, dist)
     new_img_points = new_img_points.reshape(-1, 2)
     
     viz = frame.copy()
-    # Dessin des points reprojetés (Vert) vs Cliqués (Rouge)
+    # Points cliqués (rouge) vs reprojetés avec distorsion (vert)
     for i, (p_clic, p_proj) in enumerate(zip(clicked_points, new_img_points)):
         cv2.circle(viz, (int(p_clic[0]), int(p_clic[1])), 4, (0, 0, 255), -1)
         cv2.circle(viz, (int(p_proj[0]), int(p_proj[1])), 3, (0, 255, 0), -1)
         cv2.putText(viz, str(i+1), (int(p_proj[0])+5, int(p_proj[1])-5), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-    # Dessin du terrain virtuel complet
+    # Tracé complet du court (lignes + filet + service)
     connections = [
         # Rectangle extérieur (doubles)
         (0, 4), (4, 20), (20, 16), (16, 0),
@@ -220,15 +229,10 @@ def run_advanced_calibration():
 
 if __name__ == "__main__":
     if VIDEO_PATH is None or not os.path.exists(VIDEO_PATH):
-        print("❌ Vidéo introuvable!")
-        print("\n💡 Solutions:")
+        print("Vidéo introuvable!")
+        print("\nSolutions:")
         print(f"   1. Placer '{VIDEO_FILENAME}' à la racine du projet")
         print("   2. Créer un dossier 'videos/' et y mettre la vidéo")
-        print("   3. Créer un fichier 'config.txt' avec le chemin complet de ta vidéo")
-        print("\nExemple config.txt:")
-        print("   C:\\Users\\ton_nom\\Videos\\Alcaraz_Sinner_2025-001.mp4")
+        print("   3. Créer un fichier 'config.txt' avec le chemin complet (voir config.txt.example)")
     else:
         run_advanced_calibration()
-
-if __name__ == "__main__":
-    run_advanced_calibration()

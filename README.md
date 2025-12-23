@@ -1,4 +1,4 @@
-# 🎾 Hit & Bounce Detection — Roland-Garros Final Analysis
+# Hit & Bounce Detection — Roland-Garros Final Analysis
 
 Ce projet implémente **trois architectures** pour détecter les **frappes (hit)** et **rebonds (bounce)** de balle de tennis à partir des trajectoires (x,y) :
 
@@ -8,7 +8,7 @@ Ce projet implémente **trois architectures** pour détecter les **frappes (hit)
 
 ---
 
-## 📋 Structure du Projet
+## Structure du Projet
 
 ```
 Roland-Garros-Final-Analysis/
@@ -44,7 +44,7 @@ Roland-Garros-Final-Analysis/
 
 ---
 
-## 🚀 Installation
+## Installation
 
 ### 1. Créer l'environnement virtuel
 
@@ -73,9 +73,9 @@ pip install -r requirements.txt
 
 ---
 
-## ⚙️ Configuration Initiale
+## Configuration Initiale
 
-### 📹 Vidéo (pour calibration uniquement)
+### Vidéo (pour calibration uniquement)
 
 Le fichier `calibration_distortion.py` nécessite une vidéo pour extraire une frame de référence.
 
@@ -88,7 +88,7 @@ C:\chemin\vers\ta\video\Alcaraz_Sinner_2025-001.mp4
 
 > **Note** : La vidéo est uniquement pour la calibration initiale. Le fichier `config.txt` est ignoré par Git.
 
-### 🎯 Calibration Caméra (si nécessaire)
+### Calibration Caméra (si nécessaire)
 
 Si `Camera_Params_Distorted.npz` n'existe pas :
 
@@ -103,9 +103,9 @@ python hit_n_bounce/calibration_distortion.py
 
 ---
 
-## 📊 Utilisation des Pipelines
+## Utilisation des Pipelines
 
-### 1️⃣ Détection Non Supervisée
+### 1. Détection Non Supervisée
 
 ```bash
 python hit_n_bounce/unsupervised.py
@@ -122,7 +122,7 @@ python hit_n_bounce/unsupervised.py
 
 ---
 
-### 2️⃣ ML Supervisé (XGBoost)
+### 2. ML Supervisé (XGBoost)
 
 #### Entraînement
 
@@ -157,7 +157,7 @@ model = payload["model"]
 
 ---
 
-### 3️⃣ Deep Learning (CNN + Bi-LSTM) ⭐ **NOUVELLE ARCHITECTURE**
+### 3. Deep Learning (CNN + Bi-LSTM) - NOUVELLE ARCHITECTURE
 
 #### Architecture Hybride
 
@@ -195,10 +195,10 @@ python hit_n_bounce/cnn_lstm_detector.py
 - **Learning Rate** : 0.001
 
 **Innovations clés** :
-- ✅ Fenêtres glissantes de 15 frames (au lieu de 31)
-- ✅ CrossEntropy + class_weights (au lieu de Focal Loss instable)
-- ✅ Architecture simplifiée (1 Bi-LSTM au lieu de 2)
-- ✅ Debug automatique des fenêtres (`models/debug_windows.png`)
+- Fenêtres glissantes de 15 frames (au lieu de 31)
+- CrossEntropy + class_weights (au lieu de Focal Loss instable)
+- Architecture simplifiée (1 Bi-LSTM au lieu de 2)
+- Debug automatique des fenêtres (`models/debug_windows.png`)
 
 **Performances cibles** :
 - F1-Macro : > 0.75
@@ -230,7 +230,7 @@ Après entraînement, dans `models/` :
 
 ---
 
-## 📖 Documentation Technique
+## Documentation Technique
 
 | Fichier | Contenu |
 |---------|---------|
@@ -241,7 +241,7 @@ Après entraînement, dans `models/` :
 
 ---
 
-## 🧪 Tests & Validation
+## Tests & Validation
 
 ### Test de l'architecture CNN-LSTM
 
@@ -250,10 +250,10 @@ python test_cnn_lstm.py
 ```
 
 Vérifie :
-- ✓ Construction du modèle
-- ✓ Forward pass
-- ✓ Post-processing NMS
-- ✓ Calcul des métriques
+- Construction du modèle
+- Forward pass
+- Post-processing NMS
+- Calcul des métriques
 
 ### Visualisation de l'architecture
 
@@ -273,7 +273,7 @@ Affiche une trajectoire exemple avec toutes les features cinématiques calculée
 
 ---
 
-## 🔧 Fichiers de Configuration
+## Fichiers de Configuration
 
 ### `FeatureConfig` (features.py)
 
@@ -294,13 +294,13 @@ data_folder = Path("Data hit & bounce") / "per_point_v2"
 
 ---
 
-## 📈 Comparaison des Méthodes
+## Comparaison des Méthodes
 
 | Méthode | F1-Macro | Temps Entraînement | Interprétabilité | Robustesse |
 |---------|----------|-------------------|------------------|------------|
-| **Non Supervisée** | ~0.65 | 0s (pas d'entraînement) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **XGBoost** | ~0.82 | ~5 min | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **CNN-LSTM** | ~0.82 | ~2-3h (GPU) | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **Non Supervisée** | ~0.65 | 0s (pas d'entraînement) | 5/5 | 3/5 |
+| **XGBoost** | ~0.82 | ~5 min | 4/5 | 4/5 |
+| **CNN-LSTM** | ~0.82 | ~2-3h (GPU) | 2/5 | 5/5 |
 
 **Recommandation** :
 - **Production rapide** : XGBoost (meilleur compromis)
@@ -309,7 +309,7 @@ data_folder = Path("Data hit & bounce") / "per_point_v2"
 
 ---
 
-## 🐛 Dépannage
+## Dépannage
 
 ### Problème de calibration
 
@@ -320,7 +320,7 @@ data_folder = Path("Data hit & bounce") / "per_point_v2"
 ### Problème d'entraînement DL
 
 **Loss très basse + Accuracy faible** :
-- ✅ Maintenant corrigé avec CrossEntropy + class_weights
+- Maintenant corrigé avec CrossEntropy + class_weights
 - Vérifier `models/debug_windows.png` pour alignement données/labels
 
 **OOM (Out of Memory)** :
@@ -337,7 +337,7 @@ BATCH_SIZE = 128  # au lieu de 256
 
 ---
 
-## 📦 Fichiers à Ne Pas Versionner
+## Fichiers à Ne Pas Versionner
 
 Le `.gitignore` exclut :
 - `Data hit & bounce/` (dataset lourd)
@@ -349,7 +349,7 @@ Le `.gitignore` exclut :
 
 ---
 
-## 🎓 Auteur & Contexte
+## Auteur & Contexte
 
 **Projet** : Stage Roland-Garros 2025 - Analyse automatique des frappes et rebonds
 
@@ -363,7 +363,7 @@ Le `.gitignore` exclut :
 
 ---
 
-## 📝 TODO / Améliorations Futures
+## TODO / Améliorations Futures
 
 - [ ] Data augmentation pour le CNN-LSTM (flips, noise)
 - [ ] Hyperparameter tuning (Optuna)
@@ -374,7 +374,7 @@ Le `.gitignore` exclut :
 
 ---
 
-## 🤝 Contribution
+## Contribution
 
 Pour contribuer :
 1. Fork le repository
@@ -385,10 +385,10 @@ Pour contribuer :
 
 ---
 
-## 📄 License
+## License
 
 Ce projet est à usage académique dans le cadre d'un stage Roland-Garros 2025.
 
 ---
 
-**⭐ Si ce projet vous a aidé, n'hésitez pas à lui donner une étoile sur GitHub !**
+**Si ce projet vous a aidé, n'hésitez pas à lui donner une étoile sur GitHub !**
