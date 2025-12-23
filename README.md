@@ -376,18 +376,15 @@ Le `.gitignore` exclut :
 
 ## Contribution
 
-Pour contribuer :
-1. Fork le repository
-2. Créer une branche (`git checkout -b feature/nouvelle-fonctionnalite`)
-3. Commit (`git commit -m 'Ajout nouvelle fonctionnalité'`)
-4. Push (`git push origin feature/nouvelle-fonctionnalite`)
-5. Ouvrir une Pull Request
+**Ce projet n'accepte pas de contributions externes.** Il s'agit d'un projet académique personnel développé dans le cadre d'un stage à Roland-Garros 2025.
+
+Pour toute question ou suggestion, vous pouvez ouvrir une issue pour discussion uniquement.
 
 ---
 
 ## License
 
-Ce projet est à usage académique dans le cadre d'un stage Roland-Garros 2025.
+Ce projet est à usage académique dans le cadre d'un stage Roland-Garros 2025. Tous droits réservés.
 
 ---
 
