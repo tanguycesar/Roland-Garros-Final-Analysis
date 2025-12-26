@@ -9,47 +9,42 @@ import matplotlib.pyplot as plt
 @dataclass
 class FeatureConfig:
     """Configuration pour calcul des features cinématiques"""
-    fps: float = 50.0          # Framerate vidéo (images/seconde)
-    local_window: int = 5      # Taille fenêtre pour dérivées locales
+    fps: float = 50.0
+    local_window: int = 5
 
 # ======================================================
 # 1. CONVERSION PIXELS -> MÈTRES (Calibration caméra)
 # ======================================================
-# Utilise ../Camera_Params_Distorted.npz généré par calibration_distortion.py
 
 def load_calibration(path="Camera_Params_Distorted.npz"):
-    """Charge les paramètres de calibration caméra (matrice, distorsion, rotation, translation)."""
+    """Charge les paramètres de calibration caméra."""
     if not os.path.exists(path):
         raise FileNotFoundError(f"Le fichier {path} est introuvable.")
     data = np.load(path)
     return data['camera_matrix'], data['dist_coeffs'], data['rvec'], data['tvec']
 
 def pixels_to_world_meters(xs: np.ndarray, ys: np.ndarray, mtx, dist, rvec, tvec):
-    """Projette des coordonnées pixels (x,y) vers le plan du terrain en mètres (xm,ym).
-    Applique correction de distorsion puis homographie inverse."""
+    """Projette pixels vers mètres (distorsion + homographie inverse)."""
     pts_img = np.array([[[x, y]] for x, y in zip(xs, ys)], dtype=np.float32)
     pts_undistorted = cv2.undistortPoints(pts_img, mtx, dist, P=mtx)
     R, _ = cv2.Rodrigues(rvec)
-    M = np.hstack((R[:, :2], tvec.reshape(3, 1)))
-    H = mtx @ M
-    H_inv = np.linalg.inv(H)
+    H_inv = np.linalg.inv(mtx @ np.hstack((R[:, :2], tvec.reshape(3, 1))))
+    
     pts_world = []
     for p in pts_undistorted:
         if np.isnan(p[0][0]):
             pts_world.append([np.nan, np.nan])
-            continue
-        px_homog = np.array([p[0][0], p[0][1], 1.0])
-        world_homog = H_inv @ px_homog
-        pts_world.append([world_homog[0] / world_homog[2], world_homog[1] / world_homog[2]])
+        else:
+            world_homog = H_inv @ [p[0][0], p[0][1], 1.0]
+            pts_world.append([world_homog[0] / world_homog[2], world_homog[1] / world_homog[2]])
     return np.array(pts_world)
 
 # ======================================================
 # 2. CALCUL CINÉMATIQUE (Vitesse, Accélération, Jerk)
 # ======================================================
-# Features utilisées par supervised.py, unsupervised.py, cnn_lstm_detector.py
 
 def safe_gradient(arr: np.ndarray, dt: float) -> np.ndarray:
-    """Calcule le gradient temporel en ignorant les NaN (données manquantes)."""
+    """Calcule le gradient temporel en ignorant les NaN."""
     grad = np.full_like(arr, np.nan)
     valid_idx = np.where(~np.isnan(arr))[0]
     if len(valid_idx) < 2: return grad
@@ -58,11 +53,7 @@ def safe_gradient(arr: np.ndarray, dt: float) -> np.ndarray:
     return grad
 
 def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, cfg: FeatureConfig) -> Dict[str, np.ndarray]:
-    """Calcule toutes les features physiques depuis les coordonnées pixels.
-    
-    Retourne dict avec: xm, ym (mètres), vx, vy (m/s), ax, ay (m/s²), 
-    speed, accel, jerk (m/s³), turn_rate (rad/s), ground_y (estimation sol).
-    """
+    """Calcule features physiques : position, vitesse, accélération, jerk, turn_rate."""
     mtx, dist, rvec, tvec = load_calibration()
     pts_meters = pixels_to_world_meters(xs_px, ys_px, mtx, dist, rvec, tvec)
     xm, ym = pts_meters[:, 0], pts_meters[:, 1]
@@ -82,7 +73,6 @@ def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, 
     if len(valid_idx) > 2:
         turn_rate[valid_idx] = np.abs(np.gradient(np.unwrap(angles[valid_idx]), valid_idx * dt))
     
-    # Estimation ligne de sol (percentile 99 de Y en pixels)
     ground_y = np.nanpercentile(ys_px, 99) if len(ys_px) > 0 else 0.0
 
     return {
@@ -94,18 +84,15 @@ def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, 
 # ======================================================
 # 3. DASHBOARD DE VISUALISATION
 # ======================================================
-# Utilisé par data_loader.py, unsupervised.py pour validation visuelle
 
 def visualize_dashboard(frames: List[int], kin: Dict[str, np.ndarray], detections: List[str] | None = None):
-    """Affiche dashboard multi-graphiques : trajectoire 2D, profondeur, vitesse, jerk, turn_rate.
-    Superpose optionnellement les détections hit/bounce."""
+    """Dashboard : trajectoire 2D, profondeur, vitesse, jerk, turn_rate."""
     fig = plt.figure(figsize=(18, 12))
     grid = plt.GridSpec(4, 2, hspace=0.3, wspace=0.2)
 
-    # Vue 2D terrain (plan x,y en mètres)
+    # Vue 2D terrain
     ax_map = fig.add_subplot(grid[0:2, 0])
     ax_map.plot(kin["xm"], kin["ym"], 'k-', alpha=0.4, label="Trajectoire")
-    # Limites court simple (8.23m × 23.77m)
     ax_map.plot([-4.11, 4.11, 4.11, -4.11, -4.11], [11.88, 11.88, -11.88, -11.88, 11.88], 'r--', lw=1, label="Court")
     ax_map.axhline(0, color='blue', lw=1, alpha=0.5, label="Filet")
     ax_map.set_title("Vue Terrain (mètres)")
@@ -114,36 +101,36 @@ def visualize_dashboard(frames: List[int], kin: Dict[str, np.ndarray], detection
     ax_map.axis('equal')
     ax_map.legend()
 
-    # --- B. Profondeur vs Temps ---
+    # Profondeur
     ax_y = fig.add_subplot(grid[0, 1])
     ax_y.plot(frames, kin["ym"], color='purple', lw=1.5)
     ax_y.axhline(11.88, color='red', ls=':', alpha=0.5)
     ax_y.axhline(-11.88, color='red', ls=':', alpha=0.5)
-    ax_y.set_title("Profondeur sur le terrain (Ym)")
+    ax_y.set_title("Profondeur (Ym)")
     ax_y.set_ylabel("Mètres")
 
-    # --- C. Vitesse ---
+    # Vitesse
     ax_sp = fig.add_subplot(grid[1, 1], sharex=ax_y)
-    ax_sp.plot(frames, kin["speed"] * 3.6, color='blue', lw=1.5) # Conversion km/h
+    ax_sp.plot(frames, kin["speed"] * 3.6, color='blue', lw=1.5)
     ax_sp.set_title("Vitesse (km/h)")
     ax_sp.set_ylabel("km/h")
 
-    # Jerk (dérivée de l'accélération) - Principal signal pour détection impacts
+    # Jerk
     ax_jk = fig.add_subplot(grid[2, :])
     ax_jk.plot(frames, kin["jerk"], color='red', lw=1.2, label="Jerk (m/s³)")
     thr = np.nanpercentile(kin["jerk"], 97)
-    ax_jk.axhline(thr, color='black', ls='--', alpha=0.6, label=f"Seuil 97% ({thr:.0f})")
-    ax_jk.set_title("Signal de Détection (JERK)")
-    ax_jk.set_ylim(0, thr * 4)  # Zoom sur pics pertinents
+    ax_jk.axhline(thr, color='black', ls='--', alpha=0.6, label=f"Seuil ({thr:.0f})")
+    ax_jk.set_title("Jerk")
+    ax_jk.set_ylim(0, thr * 4)
     ax_jk.legend()
 
-    # --- E. Turn Rate (Direction) ---
+    # Turn Rate
     ax_tr = fig.add_subplot(grid[3, :], sharex=ax_jk)
     ax_tr.plot(frames, kin["turn_rate"], color='green', lw=1.2)
-    ax_tr.set_title("Changement de direction (Rad/s)")
+    ax_tr.set_title("Turn Rate (rad/s)")
     ax_tr.set_xlabel("Frames")
 
-    # Si des détections sont fournies, on les superpose
+    # Superposition des détections
     if detections is not None:
         for i, act in enumerate(detections):
             if act == "hit":
@@ -157,30 +144,24 @@ def visualize_dashboard(frames: List[int], kin: Dict[str, np.ndarray], detection
     plt.show()
 
 # ======================================================
-# SCRIPT DE TEST (python -m hit_n_bounce.features)
+# SCRIPT DE TEST
 # ======================================================
 if __name__ == "__main__":
     import json
     from pathlib import Path
     import data_loader as io_utils
     
-    # Chemin relatif depuis la racine du projet
     test_file = Path("Data hit & bounce") / "per_point_v2" / "ball_data_230.json"
     
     if test_file.exists():
-        # Charge trajectoire depuis data_loader.py
         with open(test_file, 'r') as f:
             ball_data = json.load(f)
         frames, xs, ys, vis, actions = io_utils.extract_series(ball_data)
         
-        print(f"{len(frames)} frames | {sum(~np.isnan(xs))} points valides")
+        print(f"{len(frames)} frames | {sum(~np.isnan(xs))} valides")
         
-        # Calcule features cinématiques
         cfg = FeatureConfig()
         kin = compute_kinematics(frames, np.array(xs), np.array(ys), cfg)
-        
-        # Affiche dashboard
         visualize_dashboard(frames, kin, actions)
     else:
         print(f"Fichier introuvable: {test_file}")
-        print("Lancer depuis la racine du projet")
