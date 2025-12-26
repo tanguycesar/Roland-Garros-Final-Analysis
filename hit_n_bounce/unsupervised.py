@@ -12,43 +12,34 @@ import features as feat_utils
 # DÉTECTION ENRICHIE AVEC ANALYSE MULTI-SIGNAUX
 # ======================================================
 def compute_advanced_signals(kin: Dict[str, np.ndarray], fps: float) -> Dict[str, np.ndarray]:
-    """Calcule des signaux avancés pour améliorer la détection"""
-    xm = kin["xm"]
-    ym = kin["ym"]
-    vx = kin["vx"]
-    vy = kin["vy"]
-    ax = kin["ax"]
-    ay = kin["ay"]
-    jerk = kin["jerk"]
-    speed = kin["speed"]
-    accel = kin["accel"]
-    
+    """Calcule signaux avancés : courbure, snap, variabilité locale"""
+    xm, ym = kin["xm"], kin["ym"]
+    vx, vy = kin["vx"], kin["vy"]
+    jerk, speed = kin["jerk"], kin["speed"]
     n = len(ym)
     
-    # 1. Courbure de trajectoire (changement d'angle)
+    # Courbure de trajectoire
     curvature = np.full(n, np.nan)
     for i in range(3, n - 3):
         if not (np.isnan(vx[i-1]) or np.isnan(vy[i-1]) or np.isnan(vx[i+1]) or np.isnan(vy[i+1])):
-            angle_before = np.arctan2(vy[i-1], vx[i-1])
-            angle_after = np.arctan2(vy[i+1], vx[i+1])
-            angle_change = np.abs(angle_after - angle_before)
+            angle_change = np.abs(np.arctan2(vy[i+1], vx[i+1]) - np.arctan2(vy[i-1], vx[i-1]))
             if angle_change > np.pi:
                 angle_change = 2 * np.pi - angle_change
             curvature[i] = angle_change
     
-    # 2. Changement relatif de vitesse
+    # Changement relatif de vitesse
     speed_change_rate = np.full(n, np.nan)
     for i in range(1, n):
         if speed[i-1] > 0.1:
             speed_change_rate[i] = (speed[i] - speed[i-1]) / speed[i-1]
     
-    # 3. Dérivée du jerk (snap) - changement de troisième ordre
+    # Snap (dérivée du jerk)
     snap = np.gradient(np.nan_to_num(jerk, nan=0.0))
     
-    # 4. Distance au centre du court (indicateur de position)
+    # Distance au centre
     dist_from_center = np.sqrt(xm**2 + ym**2)
     
-    # 5. Variabilité locale (écart-type glissant)
+    # Variabilité locale
     window = 5
     jerk_std = np.full(n, np.nan)
     vy_std = np.full(n, np.nan)
@@ -65,83 +56,68 @@ def compute_advanced_signals(kin: Dict[str, np.ndarray], fps: float) -> Dict[str
         "vy_std": vy_std
     }
 
-def detect_tennis_events(
-    frames: List[int],
-    kin: Dict[str, np.ndarray],
-    fps: float
-) -> np.ndarray:
+def detect_tennis_events(frames: List[int], kin: Dict[str, np.ndarray], fps: float) -> np.ndarray:
     n = len(frames)
     actions = np.array(["air"] * n, dtype=object)
 
-    # Signaux de base
-    xm = kin["xm"]
-    ym = kin["ym"]
-    vx = kin["vx"]
-    vy = kin["vy"]
-    ax = kin["ax"]
-    ay = kin["ay"]
-    jerk = kin["jerk"]
-    turn = kin["turn_rate"]
-    speed = kin["speed"]
-    accel = kin["accel"]
+    xm, ym = kin["xm"], kin["ym"]
+    vx, vy = kin["vx"], kin["vy"]
+    ax, ay = kin["ax"], kin["ay"]
+    jerk, turn = kin["jerk"], kin["turn_rate"]
+    speed, accel = kin["speed"], kin["accel"]
     
-    # Signaux avancés
     advanced = compute_advanced_signals(kin, fps)
     curvature = advanced["curvature"]
     speed_change = advanced["speed_change"]
     snap = advanced["snap"]
     jerk_std = advanced["jerk_std"]
     
-    # Seuils adaptatifs multi-niveaux
+    # Seuils adaptatifs
     jerk_thr_high = np.nanpercentile(jerk, 92)
     jerk_thr_med = np.nanpercentile(jerk, 85)
     jerk_thr_low = np.nanpercentile(jerk, 75)
-    
     turn_thr = np.nanpercentile(turn, 88)
     accel_thr = np.nanpercentile(accel, 85)
     curv_thr = np.nanpercentile(curvature[~np.isnan(curvature)], 80) if np.any(~np.isnan(curvature)) else 0.5
     snap_thr = np.nanpercentile(np.abs(snap), 90)
 
-    # --- 1. DÉTECTION DES PIVOTS AVEC SCORING MULTI-CRITÈRES ---
+    # Détection des pivots avec scoring multi-critères
     pivots = []
     for i in range(5, n - 5):
-        if np.isnan(vy[i-1]) or np.isnan(vy[i+1]): continue
-        if vy[i-1] * vy[i+1] < 0:  # Inversion de direction verticale
-            # Score composite pour qualifier le pivot
+        if np.isnan(vy[i-1]) or np.isnan(vy[i+1]): 
+            continue
+        if vy[i-1] * vy[i+1] < 0:
             score = 0.0
             
-            # Critère 1: Magnitude du jerk
+            # Jerk
             if not np.isnan(jerk[i]):
-                if jerk[i] > jerk_thr_high:
-                    score += 3.0
-                elif jerk[i] > jerk_thr_med:
-                    score += 2.0
-                elif jerk[i] > jerk_thr_low:
-                    score += 1.0
+                if jerk[i] > jerk_thr_high: score += 3.0
+                elif jerk[i] > jerk_thr_med: score += 2.0
+                elif jerk[i] > jerk_thr_low: score += 1.0
             
-            # Critère 2: Courbure de trajectoire
+            # Courbure
             if not np.isnan(curvature[i]) and curvature[i] > curv_thr:
                 score += 2.0
             
-            # Critère 3: Changement de vitesse
+            # Turn rate
             if not np.isnan(turn[i]) and turn[i] > turn_thr:
                 score += 1.5
             
-            # Critère 4: Snap (dérivée du jerk)
+            # Snap
             if not np.isnan(snap[i]) and abs(snap[i]) > snap_thr:
                 score += 1.0
             
-            # Critère 5: Variabilité locale du jerk
+            # Variabilité jerk
             if not np.isnan(jerk_std[i]) and jerk_std[i] > np.nanpercentile(jerk_std[~np.isnan(jerk_std)], 70):
                 score += 1.0
             
             pivots.append((i, score))
 
     last_action_idx = -100
-    cooldown = int(0.4 * fps)  # Réduit pour capturer plus d'événements
+    cooldown = int(0.4 * fps)
 
     for idx, pivot_score in pivots:
-        # Calcul des durées de vol (stabilité de la direction)
+        # Durées de vol
         count_pre = 0
         for j in range(idx - 1, max(0, idx - 50), -1):
             if np.isnan(vy[j]) or (vy[j] * vy[idx-1] < 0): break
@@ -174,25 +150,20 @@ def detect_tennis_events(
         # CAS B : JOUEUR DU BAS (ym > 0) - "Rebond puis Frappe"
         # --------------------------------------------------
         else:
-            # Distance du fond de court (adaptative)
             dist_baseline = abs(ym[idx] - 11.88)
             is_near_baseline = dist_baseline < 2.0
             
-            # 1. Rebond : Signature courte + près du sol
+            # Rebond
             is_bounce_candidate = (vy[idx-1] > 0 and vy[idx+1] < 0) and count_post < 15
             
             if is_bounce_candidate:
                 bounce_confidence = pivot_score
-                
-                # Bonus si près du fond de court
                 if is_near_baseline:
                     bounce_confidence += 1.5
                 
-                # Vérifier cohérence spatiale (pas de saut en X)
                 spatial_ok = True
                 if idx > 0 and not np.isnan(xm[idx-1]):
-                    dx = abs(xm[idx] - xm[idx-1])
-                    if dx > 1.5:  # Saut > 1.5m
+                    if abs(xm[idx] - xm[idx-1]) > 1.5:
                         spatial_ok = False
                 
                 if bounce_confidence >= 2.5 and spatial_ok and abs(ym[idx]) > 4.0:
@@ -200,14 +171,12 @@ def detect_tennis_events(
                     last_action_idx = idx
                     continue
 
-            # 2. Frappe : Signature longue + forte
+            # Frappe
             is_bottom_hit = (vy[idx-1] > 0 and vy[idx+1] < 0) and count_post > 12
             
             if is_bottom_hit:
                 hit_confidence = pivot_score
-                
-                # Ajustement selon position
-                if abs(ym[idx]) < 6.0:  # Mi-court
+                if abs(ym[idx]) < 6.0:
                     hit_confidence *= 1.1
                 
                 if hit_confidence >= 3.5:
@@ -215,16 +184,14 @@ def detect_tennis_events(
                         actions[idx] = "hit"
                         last_action_idx = idx
 
-    # --- 3. POST-TRAITEMENT : LOGIQUE DE SÉQUENCE ---
-    # Évite les rebonds orphelins ou les successions impossibles
+    # Post-traitement
     for i in range(1, n):
-        # Si on a détecté un "bounce" trop proche d'un "hit" (même événement), on garde le hit
         if actions[i] == "hit":
             for j in range(max(0, i-6), i):
-                if actions[j] == "bounce": actions[j] = "air"
+                if actions[j] == "bounce": 
+                    actions[j] = "air"
     
-    # --- 4. RECHERCHE GUIDÉE DE REBONDS AVANT CHAQUE HIT ---
-    # Un seul rebond maximum entre deux hits consécutifs
+    # Recherche guidée de rebonds avant chaque hit
     hit_indices = [i for i in range(n) if actions[i] == "hit"]
     
     for hit_idx in hit_indices:
@@ -348,19 +315,14 @@ def detect_tennis_events(
     return actions
 
 # ======================================================
-# PIPELINE DE TRAITEMENT COMPLET
+# PIPELINE DE TRAITEMENT
 # ======================================================
 def run_unsupervised_pipeline(json_path: str, cfg: feat_utils.FeatureConfig):
     with open(json_path, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
     
-    # Extraction PCHIP via data_loader
     frames, xs_px, ys_px, vis, actions = io_utils.extract_series(raw_data)
-    
-    # Features en Mètres (Jerk, TurnRate, Vy...) via features.py
     kin = feat_utils.compute_kinematics(frames, np.array(xs_px), np.array(ys_px), cfg)
-    
-    # Détection avec la nouvelle logique asymétrique
     pred_actions = detect_tennis_events(frames, kin, cfg.fps)
 
     results = {str(fr): {"pred_action": pred_actions[i], "y_m": kin["ym"][i]} 
@@ -369,34 +331,33 @@ def run_unsupervised_pipeline(json_path: str, cfg: feat_utils.FeatureConfig):
     return frames, results, kin
 
 def visualize_results(frames, kin, results):
-    plt.close('all')  # Fermer toutes les figures précédentes
+    plt.close('all')
     ym = kin["ym"]
     actions = [results[str(f)]["pred_action"] for f in frames]
 
     plt.figure(figsize=(16, 8))
-    plt.plot(frames, ym, color='black', lw=1.5, alpha=0.6, label="Trajectoire Terrain (m)")
+    plt.plot(frames, ym, color='black', lw=1.5, alpha=0.6, label="Trajectoire")
     
-    # Lignes de court (Perspective TV : 0 = Filet)
     plt.axhline(11.88, color='red', ls='--', alpha=0.3, label="Baseline Bas")
     plt.axhline(-11.88, color='red', ls='--', alpha=0.3, label="Baseline Haut")
     plt.axhline(0, color='blue', ls=':', alpha=0.2, label="Filet")
 
-    # Unpacking des détections
+    # Détections
     hit_f = [f for f, a in zip(frames, actions) if a == "hit"]
     hit_y = [y for y, a in zip(ym, actions) if a == "hit"]
     bounce_f = [f for f, a in zip(frames, actions) if a == "bounce"]
     bounce_y = [y for y, a in zip(ym, actions) if a == "bounce"]
     
     if hit_f:
-        plt.scatter(hit_f, hit_y, color='limegreen', marker='*', s=350, label='FRARE (Hit)', zorder=5)
+        plt.scatter(hit_f, hit_y, color='limegreen', marker='*', s=350, label='Hit', zorder=5)
     if bounce_f:
-        plt.scatter(bounce_f, bounce_y, color='orange', marker='o', s=150, label='REBOND (Bounce)', zorder=5)
+        plt.scatter(bounce_f, bounce_y, color='orange', marker='o', s=150, label='Bounce', zorder=5)
 
-    plt.gca().invert_yaxis() # Important pour la lecture TV (Haut = Fond de court loin)
-    plt.title("Détection Non Supervisée : Signature Physique (Apex Haut vs Rebond/Frappe Bas)")
-    plt.ylabel("Profondeur sur le terrain (mètres)")
+    plt.gca().invert_yaxis()
+    plt.title("Détection Non Supervisée")
+    plt.ylabel("Profondeur (m)")
     plt.xlabel("Frames")
-    plt.legend(loc='upper right')
+    plt.legend()
     plt.grid(True, alpha=0.3)
     plt.show()
 

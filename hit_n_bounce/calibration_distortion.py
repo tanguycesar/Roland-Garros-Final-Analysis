@@ -11,7 +11,7 @@ import os
 # CONFIGURATION
 # ======================================================
 # Cherche la vidéo dans: racine projet, dossier videos/, ou chemin depuis config.txt
-VIDEO_FILENAME = "Alcaraz_Sinner_2025-001.mp4"
+VIDEO_FILENAME = "Alcaraz_Sinner_2025.mp4"
 FRAME_TO_USE = 400000
 
 def find_video_path(filename):
