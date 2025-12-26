@@ -7,7 +7,7 @@ from scipy.signal import savgol_filter
 from scipy.interpolate import PchipInterpolator
 
 # ======================================================
-# 0. UTILITAIRES I/O
+# 0. CHARGEMENT DES DONNÉES
 # ======================================================
 
 def load_ball_json(path: str | Path) -> Dict[str, Any]:

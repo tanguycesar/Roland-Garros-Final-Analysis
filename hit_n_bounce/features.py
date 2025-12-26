@@ -17,14 +17,14 @@ class FeatureConfig:
 # ======================================================
 
 def load_calibration(path="Camera_Params_Distorted.npz"):
-    """Charge les paramètres de calibration caméra."""
+    """Charge les paramètres de calibration caméra"""
     if not os.path.exists(path):
         raise FileNotFoundError(f"Le fichier {path} est introuvable.")
     data = np.load(path)
     return data['camera_matrix'], data['dist_coeffs'], data['rvec'], data['tvec']
 
 def pixels_to_world_meters(xs: np.ndarray, ys: np.ndarray, mtx, dist, rvec, tvec):
-    """Projette pixels vers mètres (distorsion + homographie inverse)."""
+    """Projette pixels vers mètres (distorsion + homographie inverse)"""
     pts_img = np.array([[[x, y]] for x, y in zip(xs, ys)], dtype=np.float32)
     pts_undistorted = cv2.undistortPoints(pts_img, mtx, dist, P=mtx)
     R, _ = cv2.Rodrigues(rvec)
@@ -44,7 +44,7 @@ def pixels_to_world_meters(xs: np.ndarray, ys: np.ndarray, mtx, dist, rvec, tvec
 # ======================================================
 
 def safe_gradient(arr: np.ndarray, dt: float) -> np.ndarray:
-    """Calcule le gradient temporel en ignorant les NaN."""
+    """Calcule le gradient temporel en ignorant les NaN"""
     grad = np.full_like(arr, np.nan)
     valid_idx = np.where(~np.isnan(arr))[0]
     if len(valid_idx) < 2: return grad
@@ -53,7 +53,7 @@ def safe_gradient(arr: np.ndarray, dt: float) -> np.ndarray:
     return grad
 
 def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, cfg: FeatureConfig) -> Dict[str, np.ndarray]:
-    """Calcule features physiques : position, vitesse, accélération, jerk, turn_rate."""
+    """Calcule features physiques : position, vitesse, accélération, jerk, turn_rate"""
     mtx, dist, rvec, tvec = load_calibration()
     pts_meters = pixels_to_world_meters(xs_px, ys_px, mtx, dist, rvec, tvec)
     xm, ym = pts_meters[:, 0], pts_meters[:, 1]
@@ -86,7 +86,7 @@ def compute_kinematics(frames: List[int], xs_px: np.ndarray, ys_px: np.ndarray, 
 # ======================================================
 
 def visualize_dashboard(frames: List[int], kin: Dict[str, np.ndarray], detections: List[str] | None = None):
-    """Dashboard : trajectoire 2D, profondeur, vitesse, jerk, turn_rate."""
+    """Dashboard : trajectoire 2D, profondeur, vitesse, jerk, turn_rate"""
     fig = plt.figure(figsize=(18, 12))
     grid = plt.GridSpec(4, 2, hspace=0.3, wspace=0.2)
 
