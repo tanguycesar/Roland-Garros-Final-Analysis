@@ -161,139 +161,36 @@ model = payload["model"]
 
 ---
 
-### 3. Deep Learning (CNN + Bi-LSTM) - NOUVELLE ARCHITECTURE
+## Utilisation via CLI
 
-#### Architecture Hybride
+Le script `main.py` fournit une interface en ligne de commande pour toutes les opérations :
 
-```
-Input (15 frames, 9 features)
-  ↓
-[CNN Block - Extraction motifs locaux]
-  Conv1D(64, k=5) → BatchNorm → ReLU
-  Conv1D(128, k=3) → BatchNorm → ReLU → MaxPool(2)
-  Dropout(0.3)
-  ↓
-[Bi-LSTM - Cohérence temporelle]
-  Bi-LSTM(128, return_sequences)
-  GlobalAveragePooling1D
-  ↓
-[Classification Head]
-  Dense(128) → ReLU → Dropout(0.4)
-  Dense(64) → ReLU → Dropout(0.3)
-  Dense(3) → Softmax
-  ↓
-Output: [P(air), P(hit), P(bounce)]
-```
-
-#### Entraînement
+### Calibration
 
 ```bash
-python hit_n_bounce/cnn_lstm_detector.py
+python main.py calibrate --video chemin/vers/video.mp4 --frame 400000
 ```
 
-**Hyperparamètres** :
-- **Window Size** : 15 frames (±7 contexte = 280ms à 50 FPS)
-- **Loss** : CrossEntropy + Class Weights (auto-calculés)
-- **Epochs** : 50
-- **Batch Size** : 256
-- **Learning Rate** : 0.001
-
-**Innovations clés** :
-- Fenêtres glissantes de 15 frames (au lieu de 31)
-- CrossEntropy + class_weights (au lieu de Focal Loss instable)
-- Architecture simplifiée (1 Bi-LSTM au lieu de 2)
-- Debug automatique des fenêtres (`models/debug_windows.png`)
-
-**Performances cibles** :
-- F1-Macro : > 0.75
-- Hit : F1 > 0.85
-- Bounce : F1 > 0.79
-
-#### Post-Processing NMS
-
-```python
-from hit_n_bounce.cnn_lstm_detector import EventPostProcessor
-
-processor = EventPostProcessor(
-    confidence_threshold=0.5,
-    min_event_distance=10  # frames
-)
-
-detections = processor.extract_events(y_proba)
-# {'hits': [(frame, confidence), ...], 'bounces': [...]}
-```
-
-#### Visualisations Générées
-
-Après entraînement, dans `models/` :
-- `pr_curves.png` : Courbes Precision-Recall par classe
-- `confusion_matrix.png` : Matrice de confusion
-- `debug_windows.png` : Visualisation des fenêtres d'entraînement
-- `architecture_visualization.png` : Diagramme du modèle
-- `focal_loss_visualization.png` : Courbes de loss
-
----
-
-## Documentation Technique
-
-| Fichier | Contenu |
-|---------|---------|
-| `RECAP.md` | Récapitulatif complet du projet DL |
-| `CNN_LSTM_ARCHITECTURE.md` | Architecture détaillée + justifications |
-| `MATHEMATICAL_FOUNDATION.md` | Équations mathématiques (cinématique, CNN, LSTM, métriques) |
-| `QUICKSTART.md` | Guide pratique avec exemples de code |
-
----
-
-## Tests & Validation
-
-### Test de l'architecture CNN-LSTM
+### Entraînement
 
 ```bash
-python test_cnn_lstm.py
+python main.py train --points_dir "Data hit & bounce/per_point_v2" --model_path models/classifier.joblib
 ```
 
-Vérifie :
-- Construction du modèle
-- Forward pass
-- Post-processing NMS
-- Calcul des métriques
-
-### Visualisation de l'architecture
+### Prédiction
 
 ```bash
-python visualize_architecture.py
+# Fichier unique
+python main.py predict --method supervised --model_path models/classifier.joblib --input data.json --visualize
+
+# Batch (dossier)
+python main.py predict --method unsupervised --input_dir "Data hit & bounce/per_point_v2" --output_dir outputs
 ```
 
-Génère des graphiques comparatifs et diagrammes.
-
-### Dashboard physique
+### Visualisation
 
 ```bash
-python hit_n_bounce/features.py
-```
-
-Affiche une trajectoire exemple avec toutes les features cinématiques calculées.
-
----
-
-## Fichiers de Configuration
-
-### `FeatureConfig` (features.py)
-
-```python
-@dataclass
-class FeatureConfig:
-    fps: float = 50.0          # Framerate de la vidéo
-    local_window: int = 5      # Fenêtre contexte pour dérivées
-```
-
-### Chemins de données
-
-Les chemins sont **relatifs** pour portabilité :
-```python
-# supervised.py, cnn_lstm_detector.py
-data_folder = Path("Data hit & bounce") / "per_point_v2"
+python main.py visualize --input data.json --method supervised --model_path models/classifier.joblib
 ```
 
 ---
@@ -348,7 +245,6 @@ Le `.gitignore` exclut :
 **Technologies** :
 - Computer Vision (OpenCV)
 - Machine Learning (XGBoost, scikit-learn)
-- Deep Learning (TensorFlow/Keras)
 - Traitement du signal (scipy, PCHIP interpolation)
 
 **Date** : Décembre 2025
