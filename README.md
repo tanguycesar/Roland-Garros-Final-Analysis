@@ -242,6 +242,8 @@ Le `.gitignore` exclut :
 
 **Projet** : Stage Roland-Garros 2025 - Analyse automatique des frappes et rebonds
 
+**Auteur** : Tanguy CESAR
+
 **Technologies** :
 - Computer Vision (OpenCV)
 - Machine Learning (XGBoost, scikit-learn)
@@ -263,12 +265,6 @@ Le `.gitignore` exclut :
 
 ## Contribution
 
-**Ce projet n'accepte pas de contributions externes.** Il s'agit d'un projet académique personnel développé dans le cadre d'un stage à Roland-Garros 2025.
+**Ce projet n'accepte pas de contributions externes.** Il s'agit d'un projet académique personnel développé dans le cadre d'un stage.
 
 Pour toute question ou suggestion, vous pouvez ouvrir une issue pour discussion uniquement.
-
----
-
-## License
-
-Ce projet est à usage académique dans le cadre d'un stage Roland-Garros 2025. Tous droits réservés.
