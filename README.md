@@ -1,10 +1,9 @@
-# Hit & Bounce Detection — Roland-Garros Final Analysis
+# Hit & Bounce Detection - Roland-Garros Final Analysis
 
-Ce projet implémente **trois architectures** pour détecter les **frappes (hit)** et **rebonds (bounce)** de balle de tennis à partir des trajectoires (x,y) :
+Ce projet implémente **deux architectures** pour détecter les **frappes (hit)** et **rebonds (bounce)** de balle de tennis à partir des trajectoires (x,y) :
 
 1. **Non Supervisée** : Heuristiques basées sur la physique (apex, jerk, courbure)
 2. **Supervisée ML** : XGBoost / HistGradientBoosting avec features cinématiques avancées
-3. **Deep Learning** : Architecture hybride CNN + Bi-LSTM avec gestion du déséquilibre des classes
 
 ---
 
@@ -14,13 +13,12 @@ Ce projet implémente **trois architectures** pour détecter les **frappes (hit)
 Roland-Garros-Final-Analysis/
 │
 ├── hit_n_bounce/                    # Module principal
+│   ├── __init__.py                  # Package initialization
 │   ├── calibration_distortion.py   # Calibration caméra 21 points + distorsion
 │   ├── data_loader.py               # Chargement + nettoyage PCHIP des trajectoires
 │   ├── features.py                  # Conversion pixels → mètres + cinématique
 │   ├── unsupervised.py              # Détection par analyse de signaux physiques
-│   ├── supervised.py                # ML classique (XGBoost/HistGB)
-│   ├── cnn_lstm_detector.py         # Deep Learning (CNN-LSTM + Class Weights)
-│   └── supervised_dl.py             # Anciennes expérimentations DL
+│   └── supervised.py                # ML classique (XGBoost/HistGradientBoosting)
 │
 ├── Data hit & bounce/
 │   └── per_point_v2/                # Dataset JSON (313 points)
@@ -28,18 +26,12 @@ Roland-Garros-Final-Analysis/
 │       ├── ...
 │
 ├── models/                          # Modèles entraînés (non versionnés)
-│   ├── tennis_event_classifier.joblib      # XGBoost
-│   ├── cnn_lstm_tennis_events.keras        # CNN-LSTM
-│   ├── feature_scaler.pkl                  # Normalisation
-│   └── best_cnn_lstm_model.keras           # Meilleur checkpoint
+│   └── tennis_event_classifier.joblib      # XGBoost
 │
+├── main.py                          # Interface ligne de commande
 ├── Camera_Params_Distorted.npz      # Paramètres de calibration
 ├── requirements.txt                 # Dépendances
-├── README.md                        # Ce fichier
-├── RECAP.md                         # Récapitulatif technique DL
-├── CNN_LSTM_ARCHITECTURE.md         # Documentation architecture
-├── MATHEMATICAL_FOUNDATION.md       # Fondements mathématiques
-└── QUICKSTART.md                    # Guide démarrage rapide
+└── README.md                        # Ce fichier
 ```
 
 ---
@@ -65,11 +57,10 @@ pip install -r requirements.txt
 ```
 
 **Dépendances principales** :
-- **Scientifique** : numpy, scipy, pandas, matplotlib
-- **ML Classique** : scikit-learn, xgboost
-- **Deep Learning** : tensorflow (2.10-2.15), keras
+- **Scientifique** : numpy, scipy, matplotlib
+- **ML** : scikit-learn, xgboost, joblib
 - **Computer Vision** : opencv-python
-- **Autres** : joblib, tqdm, plotly
+- **Notebooks** : jupyter, ipykernel
 
 ---
 
@@ -103,7 +94,20 @@ python hit_n_bounce/calibration_distortion.py
 
 ---
 
-## Utilisation des Pipelines
+## Utilisation
+
+### Pipeline de traitement
+
+Le projet suit une architecture modulaire en 4 étapes :
+
+```
+data_loader.py → features.py → unsupervised.py / supervised.py
+```
+
+1. **data_loader.py** : Nettoyage et interpolation PCHIP des trajectoires
+2. **features.py** : Conversion pixels → mètres + calcul cinématique
+3. **unsupervised.py** : Détection par heuristiques physiques
+4. **supervised.py** : Détection par apprentissage supervisé (XGBoost)
 
 ### 1. Détection Non Supervisée
 
@@ -300,12 +304,10 @@ data_folder = Path("Data hit & bounce") / "per_point_v2"
 |---------|----------|-------------------|------------------|------------|
 | **Non Supervisée** | ~0.65 | 0s (pas d'entraînement) | 5/5 | 3/5 |
 | **XGBoost** | ~0.82 | ~5 min | 4/5 | 4/5 |
-| **CNN-LSTM** | ~0.82 | ~2-3h (GPU) | 2/5 | 5/5 |
 
 **Recommandation** :
-- **Production rapide** : XGBoost (meilleur compromis)
-- **Précision maximale** : CNN-LSTM (après tuning)
-- **Analyse exploratoire** : Non supervisée
+- **Production** : XGBoost (meilleur compromis performance/rapidité)
+- **Analyse exploratoire** : Non supervisée (sans labels)
 
 ---
 
@@ -316,18 +318,6 @@ data_folder = Path("Data hit & bounce") / "per_point_v2"
 **Erreur** : `Vidéo introuvable`
 - Vérifier le chemin dans `config.txt`
 - Ou placer la vidéo à la racine avec le bon nom
-
-### Problème d'entraînement DL
-
-**Loss très basse + Accuracy faible** :
-- Maintenant corrigé avec CrossEntropy + class_weights
-- Vérifier `models/debug_windows.png` pour alignement données/labels
-
-**OOM (Out of Memory)** :
-```python
-# Réduire batch_size dans cnn_lstm_detector.py
-BATCH_SIZE = 128  # au lieu de 256
-```
 
 ### Problème de features
 
@@ -341,10 +331,12 @@ BATCH_SIZE = 128  # au lieu de 256
 
 Le `.gitignore` exclut :
 - `Data hit & bounce/` (dataset lourd)
-- `models/*.keras` et `models/*.pkl` (modèles entraînés)
+- `models/*.joblib` (modèles entraînés)
 - `*.mp4` (vidéos)
+- `*.npz` (paramètres de calibration)
 - `.venv/` (environnement virtuel)
 - `config.txt` (chemins locaux)
+- `hit_n_bounce/cnn_lstm_detector.py` (expérimental, local uniquement)
 - `__pycache__/` et `*.pyc`
 
 ---
@@ -365,11 +357,10 @@ Le `.gitignore` exclut :
 
 ## TODO / Améliorations Futures
 
-- [ ] Data augmentation pour le CNN-LSTM (flips, noise)
-- [ ] Hyperparameter tuning (Optuna)
-- [ ] Ensemble XGBoost + CNN-LSTM
-- [ ] API REST pour inférence temps réel
-- [ ] Export ONNX pour déploiement optimisé
+- [ ] Optimisation des hyperparamètres XGBoost
+- [ ] Ensemble de modèles pour améliorer la robustesse
+- [ ] Interface graphique pour visualisation interactive
+- [ ] Export des prédictions en format CSV
 - [ ] Tests unitaires complets
 
 ---
@@ -385,7 +376,3 @@ Pour toute question ou suggestion, vous pouvez ouvrir une issue pour discussion 
 ## License
 
 Ce projet est à usage académique dans le cadre d'un stage Roland-Garros 2025. Tous droits réservés.
-
----
-
-**Si ce projet vous a aidé, n'hésitez pas à lui donner une étoile sur GitHub !**

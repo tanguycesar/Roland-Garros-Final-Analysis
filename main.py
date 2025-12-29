@@ -11,14 +11,8 @@ try:
     from hit_n_bounce.features import FeatureConfig
     from hit_n_bounce import supervised
     from hit_n_bounce import unsupervised
-    try:
-        from hit_n_bounce import supervised_dl
-        _HAS_DL = True
-    except ImportError:
-        _HAS_DL = False
-        print("⚠️  Modèle Deep Learning non disponible (TensorFlow manquant)")
 except ImportError as e:
-    print(f"❌ Erreur d'import critique : {e}")
+    print(f"Erreur d'import critique : {e}")
     print("Vérifiez que le dossier 'hit_n_bounce' contient bien tous les modules.")
     sys.exit(1)
 
@@ -36,16 +30,10 @@ def parse_args() -> argparse.Namespace:
     p_train.add_argument("--points_dir", default="Data hit & bounce/per_point_v2", help="Folder containing JSON data")
     p_train.add_argument("--model_path", default="models/tennis_event_classifier.joblib", help="Output model path")
 
-    # --- TRAIN DEEP LEARNING ---
-    p_train_dl = sub.add_parser("train-dl", help="Train deep learning model (LSTM)")
-    p_train_dl.add_argument("--points_dir", default="Data hit & bounce/per_point_v2", help="Folder containing JSON data")
-    p_train_dl.add_argument("--model_type", choices=["lstm", "dense"], default="lstm", help="DL architecture")
-    p_train_dl.add_argument("--epochs", type=int, default=100, help="Max training epochs")
-
     # --- PREDICT ---
     p_pred = sub.add_parser("predict", help="Predict hits/bounces on data")
-    p_pred.add_argument("--method", choices=["unsupervised", "supervised", "supervised-dl"], required=True)
-    p_pred.add_argument("--model_path", help="Model path (for supervised methods)")
+    p_pred.add_argument("--method", choices=["unsupervised", "supervised"], required=True)
+    p_pred.add_argument("--model_path", help="Model path (for supervised method)")
     p_pred.add_argument("--input", help="Single JSON file path")
     p_pred.add_argument("--input_dir", help="Folder of JSON files")
     p_pred.add_argument("--output", help="Output file path (single file mode)")
@@ -55,8 +43,8 @@ def parse_args() -> argparse.Namespace:
     # --- VISUALIZE ---
     p_viz = sub.add_parser("visualize", help="Visualize trajectory and detections")
     p_viz.add_argument("--input", required=True, help="JSON file to visualize")
-    p_viz.add_argument("--method", choices=["unsupervised", "supervised", "supervised-dl"], default="unsupervised")
-    p_viz.add_argument("--model_path", help="Model path (for supervised methods)")
+    p_viz.add_argument("--method", choices=["unsupervised", "supervised"], default="unsupervised")
+    p_viz.add_argument("--model_path", help="Model path (for supervised method)")
 
     # --- PROCESS DATA ---
     p_process = sub.add_parser("process-data", help="Process and clean trajectory data")
@@ -76,19 +64,19 @@ def main() -> None:
     # 1. CALIBRATION
     # ========================================
     if args.cmd == "calibrate":
-        print("🎯 Lancement de l'outil de calibration caméra...")
+        print("Lancement de l'outil de calibration caméra...")
         try:
             from hit_n_bounce import calibration_distortion
             calibration_distortion.run_advanced_calibration()
         except Exception as e:
-            print(f"❌ Erreur de calibration: {e}")
+            print(f"Erreur de calibration: {e}")
         return
 
     # ========================================
     # 2. PROCESS DATA (nettoyage trajectoires)
     # ========================================
     if args.cmd == "process-data":
-        print(f"🔧 Traitement des données: {args.input}")
+        print(f"Traitement des données: {args.input}")
         try:
             import json
             import matplotlib.pyplot as plt
@@ -119,52 +107,33 @@ def main() -> None:
                     }
                 with open(args.output, 'w') as f:
                     json.dump(output_data, f, indent=2)
-                print(f"✅ Données nettoyées sauvegardées: {args.output}")
+                print(f"Données nettoyées sauvegardées: {args.output}")
             
-            print(f"✅ Traitement terminé: {len(frames)} frames, {sum(~np.isnan(xs))} points valides")
+            print(f"Traitement terminé: {len(frames)} frames, {sum(~np.isnan(xs))} points valides")
         except Exception as e:
-            print(f"❌ Erreur de traitement: {e}")
+            print(f"Erreur de traitement: {e}")
         return
 
     # ========================================
     # 3. ENTRAÎNEMENT SUPERVISED (ML)
     # ========================================
     if args.cmd == "train":
-        print(f"🎓 Entraînement du modèle supervisé (XGBoost/HistGradientBoosting)")
-        print(f"📂 Données: {args.points_dir}")
+        print(f"Entraînement du modèle supervisé (XGBoost/HistGradientBoosting)")
+        print(f"Données: {args.points_dir}")
         try:
             supervised.train_supervised(args.points_dir, args.model_path, cfg)
-            print(f"\n✅ Modèle sauvegardé: {args.model_path}")
+            print(f"\nModèle sauvegardé: {args.model_path}")
         except Exception as e:
-            print(f"❌ Entraînement échoué: {e}")
+            print(f"Entraînement échoué: {e}")
             import traceback
             traceback.print_exc()
         return
 
     # ========================================
-    # 4. ENTRAÎNEMENT DEEP LEARNING
-    # ========================================
-    if args.cmd == "train-dl":
-        if not _HAS_DL:
-            print("❌ TensorFlow requis. Installer avec: pip install tensorflow")
-            return
-        
-        print(f"🧠 Entraînement du modèle Deep Learning ({args.model_type.upper()})")
-        print(f"📂 Données: {args.points_dir}")
-        try:
-            model, metrics = supervised_dl.run_supervised_dl_pipeline(cfg, model_type=args.model_type)
-            print(f"\n✅ Modèle sauvegardé: models/tennis_event_classifier_dl_{args.model_type}.keras")
-        except Exception as e:
-            print(f"❌ Entraînement échoué: {e}")
-            import traceback
-            traceback.print_exc()
-        return
-
-    # ========================================
-    # 5. VISUALISATION
+    # 4. VISUALISATION
     # ========================================
     if args.cmd == "visualize":
-        print(f"📊 Visualisation: {args.input}")
+        print(f"Visualisation: {args.input}")
         try:
             import json
             import matplotlib.pyplot as plt
@@ -183,7 +152,7 @@ def main() -> None:
             
             elif args.method == "supervised":
                 if not args.model_path or not os.path.exists(args.model_path):
-                    print("❌ Modèle introuvable. Spécifier --model_path")
+                    print("Modèle introuvable. Spécifier --model_path")
                     return
                 from joblib import load
                 payload = load(args.model_path)
@@ -193,42 +162,25 @@ def main() -> None:
                 final_actions = supervised._events_from_probs(probs, cfg.fps)
                 supervised.visualize_dashboard(frames, kin, probs, final_actions)
             
-            elif args.method == "supervised-dl":
-                if not _HAS_DL:
-                    print("❌ TensorFlow requis")
-                    return
-                if not args.model_path or not os.path.exists(args.model_path):
-                    print("❌ Modèle introuvable. Spécifier --model_path")
-                    return
-                from tensorflow import keras
-                from sklearn.preprocessing import StandardScaler
-                model = keras.models.load_model(args.model_path)
-                X, _ = supervised_dl.make_frame_features(kin, cfg)
-                scaler = StandardScaler()
-                X_scaled = scaler.fit_transform(X)
-                probs = model.predict(X_scaled, verbose=0)
-                final_actions = supervised._events_from_probs(probs, cfg.fps)
-                supervised.visualize_dashboard(frames, kin, probs, final_actions)
-            
         except Exception as e:
-            print(f"❌ Erreur de visualisation: {e}")
+            print(f"Erreur de visualisation: {e}")
             import traceback
             traceback.print_exc()
         return
 
     # ========================================
-    # 6. PRÉDICTION
+    # 5. PRÉDICTION
     # ========================================
     if args.cmd == "predict":
         if not args.input and not args.input_dir:
-            sys.exit("❌ Erreur: Spécifier --input ou --input_dir")
+            sys.exit("Erreur: Spécifier --input ou --input_dir")
 
         # Mode Fichier Unique
         if args.input:
             inp = Path(args.input)
             out_path = Path(args.output) if args.output else inp.with_name(inp.stem + "_pred.json")
             
-            print(f"🔍 Traitement: {inp.name}")
+            print(f"Traitement: {inp.name}")
             
             try:
                 import json
@@ -243,26 +195,12 @@ def main() -> None:
                 
                 elif args.method == "supervised":
                     if not args.model_path or not os.path.exists(args.model_path):
-                        sys.exit(f"❌ Modèle introuvable: {args.model_path}")
+                        sys.exit(f"Modèle introuvable: {args.model_path}")
                     from joblib import load
                     payload = load(args.model_path)
                     model = payload["model"]
                     X, _ = supervised.make_frame_features(kin, cfg)
                     probs = model.predict_proba(X)
-                    pred_actions = supervised._events_from_probs(probs, cfg.fps)
-                
-                elif args.method == "supervised-dl":
-                    if not _HAS_DL:
-                        sys.exit("❌ TensorFlow requis")
-                    if not args.model_path or not os.path.exists(args.model_path):
-                        sys.exit(f"❌ Modèle introuvable: {args.model_path}")
-                    from tensorflow import keras
-                    from sklearn.preprocessing import StandardScaler
-                    model = keras.models.load_model(args.model_path)
-                    X, _ = supervised_dl.make_frame_features(kin, cfg)
-                    scaler = StandardScaler()
-                    X_scaled = scaler.fit_transform(X)
-                    probs = model.predict(X_scaled, verbose=0)
                     pred_actions = supervised._events_from_probs(probs, cfg.fps)
                 
                 # Sauvegarder les résultats
@@ -281,8 +219,8 @@ def main() -> None:
                 # Stats
                 hits = sum(1 for a in pred_actions if a == "hit")
                 bounces = sum(1 for a in pred_actions if a == "bounce")
-                print(f"✅ Détections: {hits} hits, {bounces} bounces")
-                print(f"💾 Sauvegardé: {out_path}")
+                print(f"Détections: {hits} hits, {bounces} bounces")
+                print(f"Sauvegardé: {out_path}")
                 
                 if args.visualize:
                     results = {str(f): {"pred_action": pred_actions[i]} for i, f in enumerate(frames)}
@@ -292,7 +230,7 @@ def main() -> None:
                         supervised.visualize_dashboard(frames, kin, probs, pred_actions)
                 
             except Exception as e:
-                print(f"❌ Erreur: {e}")
+                print(f"Erreur: {e}")
                 import traceback
                 traceback.print_exc()
             return
@@ -303,23 +241,16 @@ def main() -> None:
             out_dir.mkdir(parents=True, exist_ok=True)
             files = io_utils.iter_point_files(args.input_dir)
             
-            print(f"📦 Traitement de {len(files)} fichiers de {args.input_dir}...")
+            print(f"Traitement de {len(files)} fichiers de {args.input_dir}...")
             
             # Charger le modèle si supervisé
             model = None
-            if args.method in ["supervised", "supervised-dl"]:
+            if args.method == "supervised":
                 if not args.model_path or not os.path.exists(args.model_path):
-                    sys.exit(f"❌ Modèle introuvable: {args.model_path}")
-                
-                if args.method == "supervised":
-                    from joblib import load
-                    payload = load(args.model_path)
-                    model = payload["model"]
-                else:
-                    if not _HAS_DL:
-                        sys.exit("❌ TensorFlow requis")
-                    from tensorflow import keras
-                    model = keras.models.load_model(args.model_path)
+                    sys.exit(f"Modèle introuvable: {args.model_path}")
+                from joblib import load
+                payload = load(args.model_path)
+                model = payload["model"]
             
             count = 0
             total_hits = 0
@@ -339,13 +270,6 @@ def main() -> None:
                     elif args.method == "supervised":
                         X, _ = supervised.make_frame_features(kin, cfg)
                         probs = model.predict_proba(X)
-                        pred_actions = supervised._events_from_probs(probs, cfg.fps)
-                    else:  # supervised-dl
-                        from sklearn.preprocessing import StandardScaler
-                        X, _ = supervised_dl.make_frame_features(kin, cfg)
-                        scaler = StandardScaler()
-                        X_scaled = scaler.fit_transform(X)
-                        probs = model.predict(X_scaled, verbose=0)
                         pred_actions = supervised._events_from_probs(probs, cfg.fps)
                     
                     # Sauvegarder
@@ -367,12 +291,12 @@ def main() -> None:
                     total_bounces += bounces
                     count += 1
                     
-                    print(f"✓ {fp.name}: {hits} hits, {bounces} bounces", end='\r')
+                    print(f"OK {fp.name}: {hits} hits, {bounces} bounces", end='\r')
                     
                 except Exception as e:
-                    print(f"\n⚠️  Ignoré {fp.name}: {e}")
+                    print(f"\nIgnoré {fp.name}: {e}")
 
-            print(f"\n\n✅ Batch terminé!")
+            print(f"\n\nBatch terminé!")
             print(f"   Fichiers traités: {count}/{len(files)}")
             print(f"   Total détections: {total_hits} hits, {total_bounces} bounces")
             print(f"   Dossier de sortie: {out_dir}")
