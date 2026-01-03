@@ -280,15 +280,4 @@ Tests sur le dataset de 313 points annotés :
 
 ## Licence
 
-Projet académique réalisé dans le cadre d'un stage Roland-Garros 2025.
-
----
-
-## Contact
-
-**Tanguy CESAR**  
-GitHub : [tanguycesar/Roland-Garros-Final-Analysis](https://github.com/tanguycesar/Roland-Garros-Final-Analysis)
-
-Pour toute question technique :
-- Ouvrir une issue sur GitHub
-- Email : tanguy.cesar@example.com
+Projet académique réalisé dans le cadre d'un stage. 
