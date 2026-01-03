@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 import os
 import json
 
-import data_loader as io_utils
-import features as feat_utils
+from . import data_loader as io_utils
+from . import features as feat_utils
 
 # ======================================================
 # DÉTECTION ENRICHIE AVEC ANALYSE MULTI-SIGNAUX

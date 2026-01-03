@@ -11,6 +11,9 @@ config.txt
 # Deep Learning (local uniquement)
 hit_n_bounce/cnn_lstm_detector.py
 
+# Consignes exercice
+Exercice Hit & Bounce.pdf
+
 # Notebooks
 *.ipynb
 

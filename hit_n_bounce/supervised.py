@@ -18,8 +18,8 @@ except Exception:
     XGBClassifier = None
 
 from sklearn.ensemble import HistGradientBoostingClassifier
-import data_loader as io_utils
-from features import FeatureConfig, compute_kinematics
+from . import data_loader as io_utils
+from .features import FeatureConfig, compute_kinematics
 
 LABELS = ("air", "hit", "bounce")
 LABEL_TO_ID = {k: i for i, k in enumerate(LABELS)}

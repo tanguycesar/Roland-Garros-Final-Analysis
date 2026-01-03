@@ -1,307 +1,242 @@
+"""
+Hit & Bounce Detection - Roland-Garros
+Author: Tanguy CESAR
+Date: Janvier 2026
+
+This module provides two main functions for detecting tennis hits and bounces:
+1. unsupervised_hit_bounce_detection: Physics-based heuristic detection
+2. supervised_hit_bounce_detection: Machine learning-based detection (XGBoost)
+
+Both functions take a JSON file path as input and return an enriched JSON with detected events.
+"""
+
 from __future__ import annotations
-import argparse
-import os
-import sys
+import json
+import numpy as np
 from pathlib import Path
+from typing import Dict, Any, Union
+from joblib import load
 
-# --- IMPORTS DEPUIS LE PACKAGE hit_n_bounce ---
-try:
-    from hit_n_bounce import data_loader as io_utils
-    from hit_n_bounce import features as feat_utils
-    from hit_n_bounce.features import FeatureConfig
-    from hit_n_bounce import supervised
-    from hit_n_bounce import unsupervised
-except ImportError as e:
-    print(f"Erreur d'import critique : {e}")
-    print("Vérifiez que le dossier 'hit_n_bounce' contient bien tous les modules.")
-    sys.exit(1)
+from hit_n_bounce import data_loader, features, supervised, unsupervised
+from hit_n_bounce.features import FeatureConfig
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Hit & Bounce Detection - Roland-Garros 2025")
-    sub = p.add_subparsers(dest="cmd", required=True)
 
-    # --- CALIBRATION ---
-    p_calib = sub.add_parser("calibrate", help="Run camera calibration tool")
-    p_calib.add_argument("--video", help="Path to video file (optional if using config.txt)")
-    p_calib.add_argument("--frame", type=int, default=400000, help="Frame number to use for calibration")
+def unsupervised_hit_bounce_detection(json_path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Detect tennis hits and bounces using unsupervised physics-based heuristics.
+    
+    This method analyzes kinematic features (jerk, curvature, velocity changes) to identify
+    sudden direction changes characteristic of hits and bounces.
+    
+    Parameters
+    ----------
+    json_path : str or Path
+        Path to the input JSON file containing ball trajectory data.
+        Format: {frame_id: {"x": float, "y": float, "visible": bool, "action": str}}
+    
+    Returns
+    -------
+    dict
+        Enriched JSON with the same structure as input, but with "action" field updated:
+        - "hit" for detected hits
+        - "bounce" for detected bounces
+        - "air" for frames in the air
+        
+    Example
+    -------
+    >>> result = unsupervised_hit_bounce_detection("ball_data_1.json")
+    >>> print(result["32500"]["action"])  # "hit" or "bounce" or "air"
+    
+    Notes
+    -----
+    - No training required
+    - Works well on clean trajectories
+    - May require parameter tuning for different camera setups
+    """
+    json_path = Path(json_path)
+    
+    # Load and process data
+    data = data_loader.load_ball_json(json_path)
+    frames, xs, ys, vis, actions = data_loader.extract_series(data)
+    
+    # Convert to numpy arrays
+    frames_arr = np.array(frames)
+    xs_arr = np.array(xs)
+    ys_arr = np.array(ys)
+    
+    # Check if we have valid data
+    if len(frames_arr) == 0 or np.all(np.isnan(xs_arr)):
+        return data
+    
+    # Process trajectory
+    cfg = FeatureConfig(fps=50.0)
+    enriched_data = data.copy()
+    
+    # Compute kinematic features
+    kin = features.compute_kinematics(frames_arr, xs_arr, ys_arr, cfg)
+    
+    # Run unsupervised detection
+    pred_actions = unsupervised.detect_tennis_events(frames_arr, kin, cfg.fps)
+    
+    # Update enriched data with detected events
+    for i, frame_id in enumerate(frames_arr):
+        frame_str = str(int(frame_id))
+        if frame_str in enriched_data:
+            enriched_data[frame_str]["action"] = pred_actions[i]
+    
+    return enriched_data
 
-    # --- TRAIN SUPERVISED (XGBoost/HistGradientBoosting) ---
-    p_train = sub.add_parser("train", help="Train supervised ML model (XGBoost)")
-    p_train.add_argument("--points_dir", default="Data hit & bounce/per_point_v2", help="Folder containing JSON data")
-    p_train.add_argument("--model_path", default="models/tennis_event_classifier.joblib", help="Output model path")
 
-    # --- PREDICT ---
-    p_pred = sub.add_parser("predict", help="Predict hits/bounces on data")
-    p_pred.add_argument("--method", choices=["unsupervised", "supervised"], required=True)
-    p_pred.add_argument("--model_path", help="Model path (for supervised method)")
-    p_pred.add_argument("--input", help="Single JSON file path")
-    p_pred.add_argument("--input_dir", help="Folder of JSON files")
-    p_pred.add_argument("--output", help="Output file path (single file mode)")
-    p_pred.add_argument("--output_dir", default="outputs", help="Output folder (batch mode)")
-    p_pred.add_argument("--visualize", action="store_true", help="Show visualization")
+def supervised_hit_bounce_detection(
+    json_path: Union[str, Path],
+    model_path: Union[str, Path] = "models/tennis_event_classifier.joblib"
+) -> Dict[str, Any]:
+    """
+    Detect tennis hits and bounces using supervised machine learning (XGBoost).
+    
+    This method uses a pre-trained XGBoost classifier that analyzes 28 kinematic features
+    over an 11-frame window (±5 frames) to classify each frame as hit, bounce, or air.
+    
+    Parameters
+    ----------
+    json_path : str or Path
+        Path to the input JSON file containing ball trajectory data.
+        Format: {frame_id: {"x": float, "y": float, "visible": bool, "action": str}}
+    model_path : str or Path, optional
+        Path to the trained model file (.joblib format).
+        Default: "models/tennis_event_classifier.joblib"
+    
+    Returns
+    -------
+    dict
+        Enriched JSON with the same structure as input, but with "action" field updated:
+        - "hit" for detected hits
+        - "bounce" for detected bounces
+        - "air" for frames in the air
+    
+    Example
+    -------
+    >>> result = supervised_hit_bounce_detection("ball_data_1.json")
+    >>> print(result["32500"]["action"])  # "hit" or "bounce" or "air"
+    
+    Notes
+    -----
+    - Requires a pre-trained model (included in repository)
+    - Higher accuracy than unsupervised method (F1 ~0.82 vs ~0.65)
+    - Robust to noisy trajectories
+    
+    Raises
+    ------
+    FileNotFoundError
+        If model_path does not exist
+    """
+    json_path = Path(json_path)
+    model_path = Path(model_path)
+    
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found: {model_path}")
+    
+    # Load model
+    model_data = load(model_path)
+    model = model_data["model"]
+    
+    # Load and process data
+    data = data_loader.load_ball_json(json_path)
+    frames, xs, ys, vis, actions = data_loader.extract_series(data)
+    
+    # Convert to numpy arrays
+    frames_arr = np.array(frames)
+    xs_arr = np.array(xs)
+    ys_arr = np.array(ys)
+    
+    # Check if we have valid data
+    if len(frames_arr) == 0 or np.all(np.isnan(xs_arr)):
+        return data
+    
+    # Process trajectory
+    cfg = FeatureConfig(fps=50.0)
+    enriched_data = data.copy()
+    
+    # Compute kinematic features
+    kin = features.compute_kinematics(frames_arr, xs_arr, ys_arr, cfg)
+    
+    # Prepare features for ML model
+    X, _ = supervised.make_frame_features(kin, cfg)
+    
+    # Predict with XGBoost
+    probs = model.predict_proba(X)
+    
+    # Get class predictions (0=air, 1=hit, 2=bounce)
+    pred_classes = np.argmax(probs, axis=1)
+    class_to_label = {0: "air", 1: "hit", 2: "bounce"}
+    
+    # Update enriched data with detected events
+    for i, frame_id in enumerate(frames_arr):
+        frame_str = str(int(frame_id))
+        if frame_str in enriched_data and i < len(pred_classes):
+            enriched_data[frame_str]["action"] = class_to_label[pred_classes[i]]
+    
+    return enriched_data
 
-    # --- VISUALIZE ---
-    p_viz = sub.add_parser("visualize", help="Visualize trajectory and detections")
-    p_viz.add_argument("--input", required=True, help="JSON file to visualize")
-    p_viz.add_argument("--method", choices=["unsupervised", "supervised"], default="unsupervised")
-    p_viz.add_argument("--model_path", help="Model path (for supervised method)")
 
-    # --- PROCESS DATA ---
-    p_process = sub.add_parser("process-data", help="Process and clean trajectory data")
-    p_process.add_argument("--input", required=True, help="Input JSON file")
-    p_process.add_argument("--output", help="Output JSON file (optional)")
-    p_process.add_argument("--visualize", action="store_true", help="Show before/after")
+def save_enriched_json(data: Dict[str, Any], output_path: Union[str, Path]) -> None:
+    """
+    Save enriched JSON data to file.
+    
+    Parameters
+    ----------
+    data : dict
+        Enriched trajectory data
+    output_path : str or Path
+        Output file path
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    
+    print(f"Results saved to: {output_path}")
 
-    return p.parse_args()
 
-# --- LOGIQUE PRINCIPALE ---
-
-def main() -> None:
-    args = parse_args()
-    cfg = FeatureConfig()
-
-    # ========================================
-    # 1. CALIBRATION
-    # ========================================
-    if args.cmd == "calibrate":
-        print("Lancement de l'outil de calibration caméra...")
-        try:
-            from hit_n_bounce import calibration_distortion
-            calibration_distortion.run_advanced_calibration()
-        except Exception as e:
-            print(f"Erreur de calibration: {e}")
-        return
-
-    # ========================================
-    # 2. PROCESS DATA (nettoyage trajectoires)
-    # ========================================
-    if args.cmd == "process-data":
-        print(f"Traitement des données: {args.input}")
-        try:
-            import json
-            import matplotlib.pyplot as plt
-            
-            with open(args.input, 'r') as f:
-                ball_data = json.load(f)
-            
-            frames, xs, ys, vis, acts = io_utils.extract_series(ball_data)
-            
-            if args.visualize:
-                ys_orig = [ball_data[str(f)].get("y") for f in frames]
-                plt.figure(figsize=(15, 6))
-                plt.scatter(frames, ys_orig, color='red', s=8, alpha=0.3, label='Données brutes')
-                plt.plot(frames, ys, color='blue', linewidth=1.5, label='Données nettoyées')
-                plt.title(f"Trajectoire nettoyée - {Path(args.input).name}")
-                plt.legend()
-                plt.show()
-            
-            if args.output:
-                # Sauvegarder les données nettoyées
-                output_data = {}
-                for i, f in enumerate(frames):
-                    output_data[str(f)] = {
-                        "x": xs[i],
-                        "y": ys[i],
-                        "visible": vis[i],
-                        "action": acts[i]
-                    }
-                with open(args.output, 'w') as f:
-                    json.dump(output_data, f, indent=2)
-                print(f"Données nettoyées sauvegardées: {args.output}")
-            
-            print(f"Traitement terminé: {len(frames)} frames, {sum(~np.isnan(xs))} points valides")
-        except Exception as e:
-            print(f"Erreur de traitement: {e}")
-        return
-
-    # ========================================
-    # 3. ENTRAÎNEMENT SUPERVISED (ML)
-    # ========================================
-    if args.cmd == "train":
-        print(f"Entraînement du modèle supervisé (XGBoost/HistGradientBoosting)")
-        print(f"Données: {args.points_dir}")
-        try:
-            supervised.train_supervised(args.points_dir, args.model_path, cfg)
-            print(f"\nModèle sauvegardé: {args.model_path}")
-        except Exception as e:
-            print(f"Entraînement échoué: {e}")
-            import traceback
-            traceback.print_exc()
-        return
-
-    # ========================================
-    # 4. VISUALISATION
-    # ========================================
-    if args.cmd == "visualize":
-        print(f"Visualisation: {args.input}")
-        try:
-            import json
-            import matplotlib.pyplot as plt
-            
-            with open(args.input, 'r') as f:
-                ball_data = json.load(f)
-            
-            frames, xs, ys, vis, acts = io_utils.extract_series(ball_data)
-            kin = feat_utils.compute_kinematics(frames, np.array(xs), np.array(ys), cfg)
-            
-            # Détection selon la méthode
-            if args.method == "unsupervised":
-                pred_actions = unsupervised.detect_tennis_events(frames, kin, cfg.fps)
-                results = {str(f): {"pred_action": pred_actions[i]} for i, f in enumerate(frames)}
-                unsupervised.visualize_results(frames, kin, results)
-            
-            elif args.method == "supervised":
-                if not args.model_path or not os.path.exists(args.model_path):
-                    print("Modèle introuvable. Spécifier --model_path")
-                    return
-                from joblib import load
-                payload = load(args.model_path)
-                model = payload["model"]
-                X, _ = supervised.make_frame_features(kin, cfg)
-                probs = model.predict_proba(X)
-                final_actions = supervised._events_from_probs(probs, cfg.fps)
-                supervised.visualize_dashboard(frames, kin, probs, final_actions)
-            
-        except Exception as e:
-            print(f"Erreur de visualisation: {e}")
-            import traceback
-            traceback.print_exc()
-        return
-
-    # ========================================
-    # 5. PRÉDICTION
-    # ========================================
-    if args.cmd == "predict":
-        if not args.input and not args.input_dir:
-            sys.exit("Erreur: Spécifier --input ou --input_dir")
-
-        # Mode Fichier Unique
-        if args.input:
-            inp = Path(args.input)
-            out_path = Path(args.output) if args.output else inp.with_name(inp.stem + "_pred.json")
-            
-            print(f"Traitement: {inp.name}")
-            
-            try:
-                import json
-                with open(inp, 'r') as f:
-                    ball_data = json.load(f)
-                
-                frames, xs, ys, vis, acts = io_utils.extract_series(ball_data)
-                kin = feat_utils.compute_kinematics(frames, np.array(xs), np.array(ys), cfg)
-                
-                if args.method == "unsupervised":
-                    pred_actions = unsupervised.detect_tennis_events(frames, kin, cfg.fps)
-                
-                elif args.method == "supervised":
-                    if not args.model_path or not os.path.exists(args.model_path):
-                        sys.exit(f"Modèle introuvable: {args.model_path}")
-                    from joblib import load
-                    payload = load(args.model_path)
-                    model = payload["model"]
-                    X, _ = supervised.make_frame_features(kin, cfg)
-                    probs = model.predict_proba(X)
-                    pred_actions = supervised._events_from_probs(probs, cfg.fps)
-                
-                # Sauvegarder les résultats
-                output_data = {}
-                for i, f in enumerate(frames):
-                    output_data[str(f)] = {
-                        "x": xs[i] if not np.isnan(xs[i]) else None,
-                        "y": ys[i] if not np.isnan(ys[i]) else None,
-                        "visible": vis[i],
-                        "action": pred_actions[i]
-                    }
-                
-                with open(out_path, 'w') as f:
-                    json.dump(output_data, f, indent=2)
-                
-                # Stats
-                hits = sum(1 for a in pred_actions if a == "hit")
-                bounces = sum(1 for a in pred_actions if a == "bounce")
-                print(f"Détections: {hits} hits, {bounces} bounces")
-                print(f"Sauvegardé: {out_path}")
-                
-                if args.visualize:
-                    results = {str(f): {"pred_action": pred_actions[i]} for i, f in enumerate(frames)}
-                    if args.method == "unsupervised":
-                        unsupervised.visualize_results(frames, kin, results)
-                    else:
-                        supervised.visualize_dashboard(frames, kin, probs, pred_actions)
-                
-            except Exception as e:
-                print(f"Erreur: {e}")
-                import traceback
-                traceback.print_exc()
-            return
-
-        # Mode Dossier (Batch)
-        if args.input_dir:
-            out_dir = Path(args.output_dir)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            files = io_utils.iter_point_files(args.input_dir)
-            
-            print(f"Traitement de {len(files)} fichiers de {args.input_dir}...")
-            
-            # Charger le modèle si supervisé
-            model = None
-            if args.method == "supervised":
-                if not args.model_path or not os.path.exists(args.model_path):
-                    sys.exit(f"Modèle introuvable: {args.model_path}")
-                from joblib import load
-                payload = load(args.model_path)
-                model = payload["model"]
-            
-            count = 0
-            total_hits = 0
-            total_bounces = 0
-            
-            for fp in files:
-                try:
-                    import json
-                    with open(fp, 'r') as f:
-                        ball_data = json.load(f)
-                    
-                    frames, xs, ys, vis, acts = io_utils.extract_series(ball_data)
-                    kin = feat_utils.compute_kinematics(frames, np.array(xs), np.array(ys), cfg)
-                    
-                    if args.method == "unsupervised":
-                        pred_actions = unsupervised.detect_tennis_events(frames, kin, cfg.fps)
-                    elif args.method == "supervised":
-                        X, _ = supervised.make_frame_features(kin, cfg)
-                        probs = model.predict_proba(X)
-                        pred_actions = supervised._events_from_probs(probs, cfg.fps)
-                    
-                    # Sauvegarder
-                    output_data = {}
-                    for i, f in enumerate(frames):
-                        output_data[str(f)] = {
-                            "x": xs[i] if not np.isnan(xs[i]) else None,
-                            "y": ys[i] if not np.isnan(ys[i]) else None,
-                            "visible": vis[i],
-                            "action": pred_actions[i]
-                        }
-                    
-                    with open(out_dir / fp.name, 'w') as f:
-                        json.dump(output_data, f, indent=2)
-                    
-                    hits = sum(1 for a in pred_actions if a == "hit")
-                    bounces = sum(1 for a in pred_actions if a == "bounce")
-                    total_hits += hits
-                    total_bounces += bounces
-                    count += 1
-                    
-                    print(f"OK {fp.name}: {hits} hits, {bounces} bounces", end='\r')
-                    
-                except Exception as e:
-                    print(f"\nIgnoré {fp.name}: {e}")
-
-            print(f"\n\nBatch terminé!")
-            print(f"   Fichiers traités: {count}/{len(files)}")
-            print(f"   Total détections: {total_hits} hits, {total_bounces} bounces")
-            print(f"   Dossier de sortie: {out_dir}")
-            return
-
+# Example usage
 if __name__ == "__main__":
-    import numpy as np
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Tennis Hit & Bounce Detection")
+    parser.add_argument("input", help="Input JSON file path")
+    parser.add_argument("--method", choices=["unsupervised", "supervised"], 
+                       default="supervised", help="Detection method")
+    parser.add_argument("--model", default="models/tennis_event_classifier.joblib",
+                       help="Model path for supervised method")
+    parser.add_argument("--output", help="Output JSON file path (optional)")
+    
+    args = parser.parse_args()
+    
+    print(f"Processing: {args.input}")
+    print(f"Method: {args.method}")
+    
+    # Run detection
+    if args.method == "unsupervised":
+        result = unsupervised_hit_bounce_detection(args.input)
+    else:
+        result = supervised_hit_bounce_detection(args.input, args.model)
+    
+    # Count detected events
+    hits = sum(1 for v in result.values() if v.get("action") == "hit")
+    bounces = sum(1 for v in result.values() if v.get("action") == "bounce")
+    
+    print(f"Detected: {hits} hits, {bounces} bounces")
+    
+    # Save if output path provided
+    if args.output:
+        save_enriched_json(result, args.output)
+    else:
+        print("\nSample results (first 5 events):")
+        count = 0
+        for frame_id, frame_data in result.items():
+            if frame_data.get("action") in ["hit", "bounce"]:
+                print(f"  Frame {frame_id}: {frame_data['action']}")
+                count += 1
+                if count >= 5:
+                    break
