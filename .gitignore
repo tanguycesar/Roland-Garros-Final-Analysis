@@ -1,9 +1,7 @@
 # Data
 Data hit & bounce/
 *.mp4
-*.npz
 *.pt
-models/
 
 # Configuration locale (chemins vidéo)
 config.txt
