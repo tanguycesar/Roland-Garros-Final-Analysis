@@ -1,11 +1,10 @@
 # Detection automatique des frappes et rebonds au tennis
 
 **Auteur** : Tanguy CESAR  
-**Contexte** : Projet technique - Stage Roland-Garros 2025  
-**Technologies** : Python, Machine Learning, Computer Vision
+**Contexte** : Projet technique - Stage Roland-Garros 2025
 
 ---
-Analyse automatisée des événements du match final de Roland-Garros 2025 entre Alcaraz et Sinner, avec deux approches (non supervisée et supervisée) pour détecter frappes et rebonds à partir des trajectoires de balle.
+Analyse automatisée des événements de la finale de Roland-Garros 2025 entre Alcaraz et Sinner, avec deux approches (non supervisée et supervisée) pour détecter frappes et rebonds à partir des trajectoires de balle.
 ---
 
 ## Objectif
