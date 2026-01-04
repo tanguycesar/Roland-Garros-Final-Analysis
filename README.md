@@ -5,6 +5,8 @@
 **Technologies** : Python, Machine Learning, Computer Vision
 
 ---
+Analyse automatisée des événements du match final de Roland-Garros 2025 entre Alcaraz et Sinner, avec deux approches (non supervisée et supervisée) pour détecter frappes et rebonds à partir des trajectoires de balle.
+---
 
 ## Objectif
 
