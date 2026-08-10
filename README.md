@@ -219,8 +219,6 @@ Données JSON → data_loader → features → unsupervised/supervised → JSON 
 | Interprétabilité     | Excellente     | Bonne                |
 | Robustesse           | Moyenne        | Élevée               |
 
-**Recommandation** : Méthode supervisée pour la production (meilleur compromis précision/complexité).
-
 ---
 
 ## Contenu du dépôt
